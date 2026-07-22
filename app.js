@@ -156,7 +156,7 @@
   }
 
   function mapInbound(rows, importRows = []) {
-    const importStatuses = new Map(importRows.map(({ values: row, rowIndex }) => [rowIndex + 3, value(row, "STATUS", "WEBSITE STATUS")]));
+    const importStatuses = new Map(importRows.map(({ values: row, rowIndex }) => [rowIndex + 2, value(row, "STATUS", "WEBSITE STATUS")]));
     return rows.map(({ values: row, rowIndex }) => {
       const shipmentNumber = value(row, "SHIPMENT #");
       if (/^(URGENT|AS OF|SCHEDULED|COMPLETED|ESTIMATED)/i.test(shipmentNumber)) return null;
@@ -230,7 +230,7 @@
     const [inboundResult, outboundResult, importsResult] = await Promise.allSettled([
       querySheet("INBOUND SHIPMENTS DATA", "A3:S1200"),
       querySheet("Outbound Shipping Schedule", "A3:V1000"),
-      querySheet("IMPORTS", "A2:AF1200")
+      querySheet("IMPORTS", "A1:AF1200")
     ]);
     state.inbound = inboundResult.status === "fulfilled" ? mapInbound(inboundResult.value, importsResult.status === "fulfilled" ? importsResult.value : []) : [];
     state.outbound = outboundResult.status === "fulfilled" ? mapOutbound(outboundResult.value) : [];
