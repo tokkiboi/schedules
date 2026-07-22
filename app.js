@@ -156,7 +156,25 @@
   }
 
   function mapInbound(rows, importRows = []) {
-    const importStatuses = new Map(importRows.map(({ values: row, rowIndex }) => [rowIndex + 2, value(row, "STATUS", "WEBSITE STATUS")]));
+    const identityKey = (kind, input) => input ? `${kind}:${String(input).toUpperCase().replace(/\s+/g, "")}` : "";
+    const statusFields = (row) => [
+      ["container", value(row, "CONTAINER", "CONTAINER RAW (SYSTEM)")],
+      ["mbl", value(row, "MBL")],
+      ["hbl", value(row, "HBL")],
+      ["invoice", value(row, "INVOICE")],
+      ["entry", value(row, "ENTRY NUMBER")],
+      ["docs", value(row, "DOCS / FOLDER", "DOCS")],
+      ["shipment", value(row, "SHIPMENT #", "SHIPMENT")]
+    ];
+    const importStatuses = new Map();
+    importRows.forEach(({ values: row }) => {
+      const status = value(row, "STATUS", "WEBSITE STATUS");
+      if (!status) return;
+      statusFields(row).forEach(([kind, fieldValue]) => {
+        const key = identityKey(kind, fieldValue);
+        if (key) importStatuses.set(key, status);
+      });
+    });
     return rows.map(({ values: row, rowIndex }) => {
       const shipmentNumber = value(row, "SHIPMENT #");
       if (/^(URGENT|AS OF|SCHEDULED|COMPLETED|ESTIMATED)/i.test(shipmentNumber)) return null;
@@ -171,12 +189,13 @@
       const carrier = carrierFor(identifier, [declaredCarrier, vessel, shipmentNumber].join(" "), fallbackCarrier);
       const sourceRow = Number(value(row, "IMPORTS SOURCE ROW")) || rowIndex + 4;
       const mode = shipmentMode("inbound", row, identifier, carrier);
+      const sourceStatus = statusFields(row).map(([kind, fieldValue]) => importStatuses.get(identityKey(kind, fieldValue))).find(Boolean);
       const embeddedEta = [value(row, "MBL"), value(row, "HBL"), value(row, "NOTES / QTY")].join(" ").match(/ETA:\s*(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)/i)?.[1] || "";
       const record = {
         id: `inbound-${identifier || value(row, "INVOICE") || sourceRow}`,
         direction: "inbound", date: value(row, "ETA", "DELIVERY EXPECTED") || embeddedEta, customer: parcel ? `${shipmentNumber || carrier} shipment` : value(row, "DOCS / FOLDER", "SHIPMENT #") || "Inbound shipment",
         invoice: value(row, "INVOICE"), identifier, carrier, route: [value(row, "ORIGIN"), value(row, "DESTINATION")].filter(Boolean).join(" → ") || value(row, "RESERVED / BROKER"),
-        units: value(row, "NOTES / QTY"), status: importStatuses.get(sourceRow) || value(row, "INBOUND STATUS", "STATUS") || "Work in Progress", shipmentMode: mode, sourceRow,
+        units: value(row, "NOTES / QTY"), status: sourceStatus || value(row, "INBOUND STATUS", "STATUS") || "Work in Progress", shipmentMode: mode, sourceRow,
         sourceUrl: `https://docs.google.com/spreadsheets/d/${MASTER_ID}/edit#gid=1497250700&range=A${sourceRow}:AF${sourceRow}`, trackingUrl: trackingUrl(identifier, carrier)
       };
       record.missingFields = quality("inbound", record);
