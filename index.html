@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Expected inbound and outbound shipment schedules for SK Distribution internal operations.">
+  <title>SK Distribution — Shipping Schedules</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=DM+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://www.gstatic.com/charts/loader.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="ops-app theme-editorial" id="app">
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="SK Distribution operations home">
+        <span class="brand-mark">SK</span>
+        <span><strong>Distribution</strong><small>Supply chain operations</small></span>
+      </a>
+      <nav class="main-nav" aria-label="Primary navigation">
+        <a class="active" href="#schedule">Overview</a>
+        <button type="button" data-direction-link="inbound">Inbound</button>
+        <button type="button" data-direction-link="outbound">Outbound</button>
+        <a href="#sources">Sources</a>
+      </nav>
+      <div class="top-actions">
+        <div class="theme-switcher" aria-label="Design version">
+          <button class="selected" type="button" data-theme="editorial" title="Warehouse Editorial">01</button>
+          <button type="button" data-theme="control" title="Control Tower">02</button>
+          <button type="button" data-theme="network" title="Route Network">03</button>
+        </div>
+        <button class="share-button" id="share" type="button">Share view ↗</button>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-content">
+          <p class="eyebrow">Buena Park · Operations board</p>
+          <h1>Expected inbound &amp; outbound shipping schedules</h1>
+          <p class="hero-copy">One shared view of arrivals, customer shipments, carrier handoffs, and source-sheet status across the distribution operation.</p>
+          <div class="hero-actions">
+            <a class="primary-button" href="#schedule">Open operations board <span>↓</span></a>
+            <button class="secondary-button" id="refresh" type="button">Refresh source</button>
+          </div>
+        </div>
+        <div class="hero-visual" aria-hidden="true">
+          <div class="route-grid">
+            <span class="route-node port">Port</span>
+            <span class="route-node warehouse">Buena Park<br>Warehouse</span>
+            <span class="route-node customer one">Customer</span>
+            <span class="route-node customer two">Customer</span>
+            <i class="route-line line-one"></i><i class="route-line line-two"></i><i class="route-line line-three"></i>
+          </div>
+        </div>
+        <div class="kpi-strip">
+          <article><span>Expected inbound</span><strong id="kpi-inbound">—</strong><small>active shipments</small></article>
+          <article><span>Expected outbound</span><strong id="kpi-outbound">—</strong><small>active schedules</small></article>
+          <article><span>Needs data review</span><strong id="kpi-review">—</strong><small>active records flagged</small></article>
+          <article><span>Live sources</span><strong id="kpi-sources">—</strong><small>browser access verified</small></article>
+          <article><span>Last checked</span><strong class="refresh-time" id="kpi-checked">—</strong><small>auto-check · 2 min</small></article>
+        </div>
+      </section>
+
+      <section class="integrity-strip" id="integrity" aria-label="Schedule integrity monitor">
+        <div><span class="integrity-pulse"></span><strong>Schedule monitor active while this view is open</strong><small>Comparing dates, statuses, identifiers, carriers, and shipment types every 2 minutes</small></div>
+        <button type="button" id="review-shortcut"><strong id="review-total">0</strong><span>records need review</span></button>
+        <div class="source-health"><strong id="source-health-title">Checking source access…</strong><small id="source-health-detail">No schedule is shown until the source read succeeds.</small></div>
+      </section>
+
+      <section class="expectation-grid" aria-label="Next expected schedules">
+        <article class="schedule-preview preview-inbound">
+          <header><div><span class="preview-icon">↓</span><strong>Next inbound</strong></div><button type="button" data-open="inbound">View all →</button></header>
+          <div class="preview-list" id="preview-inbound"><p class="preview-empty">Loading expected shipments…</p></div>
+        </article>
+        <article class="schedule-preview preview-outbound">
+          <header><div><span class="preview-icon">↗</span><strong>Next outbound</strong></div><button type="button" data-open="outbound">View all →</button></header>
+          <div class="preview-list" id="preview-outbound"><p class="preview-empty">Loading expected schedules…</p></div>
+        </article>
+      </section>
+
+      <section class="operations-panel" id="schedule">
+        <div class="section-heading">
+          <div><p class="eyebrow">Live Google Sheets source</p><h2>Shipping operations board</h2></div>
+          <div class="live-state" id="live-state"><span class="live-dot"></span>Connecting to the Logistics workbook…</div>
+        </div>
+
+        <div class="change-monitor">
+          <div><span class="change-label">Change watch</span><strong id="change-count">No changes detected in this browser yet</strong></div>
+          <div class="change-feed" id="change-feed"><span class="change-empty">Added, removed, rescheduled, cancelled, shipped, completed, and reclassified records will appear here.</span></div>
+        </div>
+
+        <div class="toolbar">
+          <div class="direction-tabs" role="tablist" aria-label="Schedule direction">
+            <button class="active" id="tab-inbound" type="button" data-direction="inbound" role="tab">Inbound <span>0</span></button>
+            <button id="tab-outbound" type="button" data-direction="outbound" role="tab">Outbound <span>0</span></button>
+          </div>
+          <label class="search-box"><span>⌕</span><input id="search" type="search" placeholder="Search shipment, invoice, customer, carrier…"></label>
+          <select id="mode-filter" aria-label="Filter by shipment type"><option value="">All shipment types</option></select>
+          <label class="finished-toggle"><input id="attention-only" type="checkbox"> Needs review</label>
+          <label class="finished-toggle"><input id="show-finished" type="checkbox"> Show finished</label>
+        </div>
+
+        <div class="table-shell">
+          <table>
+            <thead><tr><th>Date / ETA</th><th id="party-heading">Shipment / Invoice</th><th>Container / PRO / Tracking</th><th>Carrier &amp; type</th><th>Route</th><th>Data check</th><th>Source</th><th>Status</th></tr></thead>
+            <tbody id="schedule-body"><tr class="empty-row"><td colspan="8">Loading expected schedules…</td></tr></tbody>
+          </table>
+        </div>
+        <p class="row-limit" id="row-limit" hidden></p>
+      </section>
+
+      <section class="sources-panel" id="sources">
+        <div class="section-heading"><div><p class="eyebrow">Relational source registry</p><h2>Operational workbooks</h2></div><p>Every displayed schedule links back to its exact source row for traceable correction.</p></div>
+        <div class="source-cards">
+          <a class="source-card" href="https://docs.google.com/spreadsheets/d/1M-vZ24Yw4ZN7R7b_473cVn8kny8DznTakSsD3VQsCzc/edit" target="_blank" rel="noreferrer">
+            <span class="source-icon source-mint">LM</span><div><strong>LOGISTICS MASTER 2026</strong><p>Primary inbound and consolidated outbound schedule</p><small id="logistics-detail">Checking direct browser access…</small></div><span class="source-state state-live" id="logistics-state">checking</span>
+          </a>
+          <a class="source-card" href="https://docs.google.com/spreadsheets/d/14lH9SQzTLj8MR7UbxMfkoTDDlzhPoE8CqHV3IpK450I/edit" target="_blank" rel="noreferrer">
+            <span class="source-icon source-blue">WI</span><div><strong>WMS Invoice and Issue</strong><p>Invoice, ship-date, method, and issue enrichment</p><small>Private workbook · linked for authorized users</small></div><span class="source-state state-linked">linked</span>
+          </a>
+          <a class="source-card" href="https://docs.google.com/spreadsheets/d/12Aty04yiLPPqz06AFDM8Y1Log2jEOqdXDqwiUV5yVX8/edit" target="_blank" rel="noreferrer">
+            <span class="source-icon source-lavender">ND</span><div><strong>NATIONAL / IHERB / MBX Dimensions</strong><p>National, ULTA, iHerb, TJX/ROSS schedules and dimensions</p><small>Private workbook · linked for authorized users</small></div><span class="source-state state-linked">linked</span>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer><span><strong>SK</strong> Distribution · Buena Park, California</span><span>Public schedule view · Google Sheets source control</span></footer>
+    <div class="toast" id="toast" role="status" hidden></div>
+  </div>
+</body>
+</html>
