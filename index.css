@@ -794,6 +794,19 @@ main {
   color: #059669;
 }
 
+.source-origin-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  color: var(--ink);
+}
+
 .mode-badge {
   font-size: 11px;
   font-weight: 700;
@@ -984,16 +997,22 @@ main {
   position: relative;
 }
 
-.source-card-item.active {
+.source-card-item.enabled {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.source-checkbox-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
 }
 
 .source-card-title {
   font-size: 13px;
   font-weight: 800;
   text-transform: uppercase;
-  margin-bottom: 4px;
 }
 
 .source-card-id {
@@ -1233,7 +1252,7 @@ main {
 
 .modal-body {
   padding: 28px;
-  overflow-y: auto;
+  overflow-y.auto;
   flex: 1;
 }
 

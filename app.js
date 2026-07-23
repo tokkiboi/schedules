@@ -1,38 +1,38 @@
 /**
- * SK Distribution — Relational Shipping Schedules & Multi-Source Google Drive Sync Logic
+ * SK Distribution — Multi-Sheet Relational Shipping Schedules & Drive Pipeline Engine
  */
 
 (() => {
   "use strict";
 
   const DEFAULT_MASTER_ID = "1M-vZ24Yw4ZN7R7b_473cVn8kny8DznTakSsD3VQsCzc";
-  const SNAPSHOT_KEY = "sk-pages-schedule-snapshot-v1";
-  const CONFIG_KEY = "sk-pages-schedule-config-v1";
-  const SOURCES_KEY = "sk-pages-schedule-sources-v1";
+  const SNAPSHOT_KEY = "sk-pages-schedule-snapshot-multi-v2";
+  const SOURCES_KEY = "sk-pages-schedule-sources-multi-v2";
   const FINISHED_SET = new Set(["SHIPPED", "DELIVERED", "RECEIVED", "COMPLETED", "CANCELLED", "CANCELED"]);
 
-  // Sources Registry State
+  // Multi-Source Registry Presets
   const defaultSources = [
     {
       id: "master",
-      name: "Master Distribution Hub",
+      name: "Master Hub Sheet",
       sheetId: DEFAULT_MASTER_ID,
       inboundTab: "Inbound",
       outboundTab: "Outbound",
-      webhookUrl: ""
+      webhookUrl: "",
+      enabled: true
+    },
+    {
+      id: "buena-park",
+      name: "Buena Park Regional Dock",
+      sheetId: DEFAULT_MASTER_ID,
+      inboundTab: "Inbound",
+      outboundTab: "Outbound",
+      webhookUrl: "",
+      enabled: true
     }
   ];
 
   let sources = [...defaultSources];
-
-  // Configuration State
-  const config = {
-    activeSourceId: "master",
-    sheetId: DEFAULT_MASTER_ID,
-    inboundTab: "Inbound",
-    outboundTab: "Outbound",
-    webhookUrl: ""
-  };
 
   // Application State
   const state = {
@@ -49,7 +49,7 @@
     theme: "editorial"
   };
 
-  // Helper Selectors
+  // Selectors
   const $ = (selector) => document.querySelector(selector);
   const $$ = (selector) => Array.from(document.querySelectorAll(selector));
 
@@ -60,15 +60,15 @@
   const normalizedStatus = (val) => String(val || "Work in Progress").trim().replace(/\s+/g, " ");
   const isFinished = (val) => FINISHED_SET.has(normalizedStatus(val).toUpperCase());
 
-  // URL Parser for Sheet ID
+  // URL Sheet ID Extractor
   function extractSheetIdFromUrl(input) {
     const text = String(input || "").trim();
     const match = text.match(/\/d\/([a-zA-Z0-9-_]{25,})\//) || text.match(/^([a-zA-Z0-9-_]{25,})$/);
     return match ? match[1] : text;
   }
 
-  // Load Saved Sources & Configuration
-  function loadSourcesAndConfig() {
+  // Load Saved Sources State
+  function loadSources() {
     const savedSources = localStorage.getItem(SOURCES_KEY);
     if (savedSources) {
       try {
@@ -78,125 +78,69 @@
         console.warn("Could not parse saved sources:", e);
       }
     }
-
-    const savedConfig = localStorage.getItem(CONFIG_KEY);
-    if (savedConfig) {
-      try {
-        const parsed = JSON.parse(savedConfig);
-        config.activeSourceId = parsed.activeSourceId || "master";
-        config.sheetId = parsed.sheetId || DEFAULT_MASTER_ID;
-        config.inboundTab = parsed.inboundTab || "Inbound";
-        config.outboundTab = parsed.outboundTab || "Outbound";
-        config.webhookUrl = parsed.webhookUrl || "";
-      } catch (e) {
-        console.warn("Could not parse saved config:", e);
-      }
-    }
-
-    renderSourceSelectors();
-    updateFormInputs();
+    renderSourceCards();
   }
 
-  function renderSourceSelectors() {
-    // Topbar Selector
-    const headerSelect = $("#header-source-select");
-    if (headerSelect) {
-      headerSelect.innerHTML = sources.map(src => `
-        <option value="${src.id}" ${src.id === config.activeSourceId ? "selected" : ""}>
-          📊 ${escapeHtml(src.name)} (${src.sheetId.slice(0, 8)}...)
-        </option>
-      `).join("");
-    }
+  function saveSources() {
+    localStorage.setItem(SOURCES_KEY, JSON.stringify(sources));
+    renderSourceCards();
+  }
 
-    // Sources Cards List in Data Sources Tab
+  function renderSourceCards() {
+    const activeSourcesCount = sources.filter(s => s.enabled).length;
+    const liveText = $("#live-indicator-text");
+    if (liveText) liveText.textContent = `${activeSourcesCount} Active ${activeSourcesCount === 1 ? 'Sheet' : 'Sheets'}`;
+
+    const activeCountVal = $("#source-active-count");
+    if (activeCountVal) activeCountVal.textContent = `${activeSourcesCount} Connected`;
+
     const cardsList = $("#sources-cards-list");
     if (cardsList) {
-      cardsList.innerHTML = sources.map(src => `
-        <div class="source-card-item ${src.id === config.activeSourceId ? 'active' : ''}">
-          <div class="source-card-title">${escapeHtml(src.name)}</div>
+      cardsList.innerHTML = sources.map((src, index) => `
+        <div class="source-card-item ${src.enabled ? 'enabled' : ''}">
+          <div class="source-checkbox-header">
+            <span class="source-card-title">${escapeHtml(src.name)}</span>
+            <label class="toggle-chip" title="Toggle active sync for this source">
+              <input type="checkbox" class="source-toggle-checkbox" data-index="${index}" ${src.enabled ? 'checked' : ''}>
+              <span class="toggle-indicator"></span>
+              <span style="font-size:10px;">${src.enabled ? 'Enabled' : 'Disabled'}</span>
+            </label>
+          </div>
           <div class="source-card-id">ID: <code>${src.sheetId}</code></div>
-          <div style="font-size:11px; color:var(--muted); margin-bottom:10px;">
+          <div style="font-size:11px; color:var(--muted); margin-bottom:12px;">
             Tabs: Inbound (${escapeHtml(src.inboundTab)}) · Outbound (${escapeHtml(src.outboundTab)})
           </div>
           <div class="source-card-links">
-            <button class="btn ${src.id === config.activeSourceId ? 'primary-btn' : 'secondary-btn'} select-src-btn" data-id="${src.id}" style="padding:4px 10px;" type="button">
-              ${src.id === config.activeSourceId ? '✓ Active' : 'Switch Source'}
-            </button>
             <a class="btn secondary-btn" href="https://docs.google.com/spreadsheets/d/${src.sheetId}" target="_blank" rel="noopener" style="padding:4px 10px;">
-              Drive Sheet ↗
+              Open Drive Sheet ↗
             </a>
+            ${sources.length > 1 ? `
+              <button class="btn secondary-btn remove-src-btn" data-index="${index}" style="padding:4px 8px; color:var(--danger);" type="button">Remove</button>
+            ` : ""}
           </div>
         </div>
       `).join("");
 
-      $$(".select-src-btn").forEach(btn => {
+      $$(".source-toggle-checkbox").forEach(chk => {
+        chk.addEventListener("change", (e) => {
+          const idx = Number(chk.getAttribute("data-index"));
+          if (sources[idx]) {
+            sources[idx].enabled = e.target.checked;
+            saveSources();
+            loadScheduleData(true);
+          }
+        });
+      });
+
+      $$(".remove-src-btn").forEach(btn => {
         btn.addEventListener("click", () => {
-          const id = btn.getAttribute("data-id");
-          switchSource(id);
+          const idx = Number(btn.getAttribute("data-index"));
+          sources.splice(idx, 1);
+          saveSources();
+          loadScheduleData(true);
         });
       });
     }
-  }
-
-  function switchSource(sourceId) {
-    const found = sources.find(s => s.id === sourceId);
-    if (!found) return;
-
-    config.activeSourceId = found.id;
-    config.sheetId = found.sheetId;
-    config.inboundTab = found.inboundTab;
-    config.outboundTab = found.outboundTab;
-    config.webhookUrl = found.webhookUrl || "";
-
-    localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
-    renderSourceSelectors();
-    updateFormInputs();
-    showToast(`Switched active Google Sheet source to "${found.name}"`);
-    loadScheduleData(true);
-  }
-
-  function updateFormInputs() {
-    if ($("#cfg-sheet-id")) $("#cfg-sheet-id").value = config.sheetId;
-    if ($("#cfg-inbound-tab")) $("#cfg-inbound-tab").value = config.inboundTab;
-    if ($("#cfg-outbound-tab")) $("#cfg-outbound-tab").value = config.outboundTab;
-    if ($("#cfg-webhook-url")) $("#cfg-webhook-url").value = config.webhookUrl;
-
-    const directLink = $("#sheet-direct-link");
-    if (directLink) directLink.href = `https://docs.google.com/spreadsheets/d/${config.sheetId}`;
-
-    const heroInbound = $("#hero-inbound-sheet-link");
-    if (heroInbound) heroInbound.href = `https://docs.google.com/spreadsheets/d/${config.sheetId}/edit#gid=0`;
-
-    const heroOutbound = $("#hero-outbound-sheet-link");
-    if (heroOutbound) heroOutbound.href = `https://docs.google.com/spreadsheets/d/${config.sheetId}/edit`;
-
-    const statusText = $("#source-writeback-status");
-    if (statusText) {
-      statusText.textContent = config.webhookUrl ? "2-Way Webhook Active" : "Read-Only (No Webhook)";
-      statusText.className = config.webhookUrl ? "metric-val status-ok" : "metric-val";
-    }
-  }
-
-  function saveConfig() {
-    config.sheetId = extractSheetIdFromUrl($("#cfg-sheet-id")?.value);
-    config.inboundTab = $("#cfg-inbound-tab")?.value.trim() || "Inbound";
-    config.outboundTab = $("#cfg-outbound-tab")?.value.trim() || "Outbound";
-    config.webhookUrl = $("#cfg-webhook-url")?.value.trim() || "";
-
-    const activeSrc = sources.find(s => s.id === config.activeSourceId);
-    if (activeSrc) {
-      activeSrc.sheetId = config.sheetId;
-      activeSrc.inboundTab = config.inboundTab;
-      activeSrc.outboundTab = config.outboundTab;
-      activeSrc.webhookUrl = config.webhookUrl;
-      localStorage.setItem(SOURCES_KEY, JSON.stringify(sources));
-    }
-
-    localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
-    renderSourceSelectors();
-    updateFormInputs();
-    showToast("Google Sheets configuration updated!");
-    loadScheduleData(true);
   }
 
   function saveNewSource() {
@@ -216,15 +160,15 @@
       sheetId,
       inboundTab: inbound,
       outboundTab: outbound,
-      webhookUrl: ""
+      webhookUrl: "",
+      enabled: true
     };
 
     sources.push(newSrc);
-    localStorage.setItem(SOURCES_KEY, JSON.stringify(sources));
-
+    saveSources();
     closeAddSourceModal();
-    switchSource(newId);
-    showToast(`Added and connected new source "${name}"!`);
+    showToast(`Added and connected Google Sheet source "${name}"!`);
+    loadScheduleData(true);
   }
 
   // Row Value Helper
@@ -378,7 +322,7 @@
     return { score, missing, needsAttention: missing.length > 0 };
   }
 
-  // Relational Linking Engine
+  // Cross-Sheet Relational Linking Engine
   function findRelatedRecords(record) {
     if (!record) return [];
     const targetSet = record.direction === "inbound" ? state.outbound : state.inbound;
@@ -398,8 +342,8 @@
     });
   }
 
-  // Process Row
-  function processRow(direction, rawRow) {
+  // Process Row with Source Sheet Metadata
+  function processRow(direction, rawRow, sourceMeta) {
     const identifier = getRowValue(rawRow, "CONTAINER NO", "CONTAINER", "MBL", "HBL", "PRO NO", "PRO #", "TRACKING NO", "TRACKING", "AWB", "BOL");
     const carrierContext = getRowValue(rawRow, "CARRIER", "LINE", "SHIPPING LINE", "CARRIER TYPE", "METHOD");
     const carrier = detectCarrier(identifier, carrierContext, carrierContext);
@@ -424,6 +368,8 @@
       status: status || "Work in Progress",
       note: note || "",
       trackingUrl,
+      sourceName: sourceMeta ? sourceMeta.name : "Master Sheet",
+      sourceId: sourceMeta ? sourceMeta.sheetId : DEFAULT_MASTER_ID,
       raw: rawRow
     };
 
@@ -478,7 +424,7 @@
     });
   }
 
-  // Mock Realistic Data
+  // Mock Data
   function generateMockData() {
     const mockInboundRaw = [
       { "CONTAINER NO": "HMMU1234567", "CARRIER": "HMM", "ETA": "07/25/2026", "VESSEL / FLIGHT": "HYUNDAI BRAVE / 042E", "STATUS": "In Transit", "INVOICE": "INV-8921", "NOTE": "Priority electronics pallet" },
@@ -495,19 +441,29 @@
       { "PRO NO": "TBA902194012", "CARRIER": "Amazon Logistics", "SHIP DATE": "07/22/2026", "CUSTOMER": "Amazon FBA ONT8", "INVOICE": "INV-8850", "STATUS": "Delivered", "NOTE": "FBA Direct dropoff" }
     ];
 
+    const srcMeta = { name: "Master Hub Sheet", sheetId: DEFAULT_MASTER_ID };
     return {
-      inbound: mockInboundRaw.map(r => processRow("inbound", r)),
-      outbound: mockOutboundRaw.map(r => processRow("outbound", r))
+      inbound: mockInboundRaw.map(r => processRow("inbound", r, srcMeta)),
+      outbound: mockOutboundRaw.map(r => processRow("outbound", r, srcMeta))
     };
   }
 
-  // Load Schedule Data Engine
+  // Concurrent Multi-Sheet Load Engine
   async function loadScheduleData(forceRefresh = false) {
     state.loading = true;
 
+    const enabledSources = sources.filter(s => s.enabled);
+    if (enabledSources.length === 0) {
+      state.inbound = [];
+      state.outbound = [];
+      state.loading = false;
+      updateDashboard();
+      return;
+    }
+
     let cachedDataLoaded = false;
     if (!forceRefresh) {
-      const cached = localStorage.getItem(SNAPSHOT_KEY + "-" + config.activeSourceId);
+      const cached = localStorage.getItem(SNAPSHOT_KEY);
       if (cached) {
         try {
           const parsed = JSON.parse(cached);
@@ -535,55 +491,63 @@
     }
 
     try {
-      const inboundUrl = `https://docs.google.com/spreadsheets/d/${config.sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(config.inboundTab)}`;
-      const outboundUrl = `https://docs.google.com/spreadsheets/d/${config.sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(config.outboundTab)}`;
+      const fetchPromises = enabledSources.map(src => {
+        const inUrl = `https://docs.google.com/spreadsheets/d/${src.sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(src.inboundTab)}`;
+        const outUrl = `https://docs.google.com/spreadsheets/d/${src.sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(src.outboundTab)}`;
 
-      const [inboundRes, outboundRes] = await Promise.allSettled([
-        fetch(inboundUrl).then(r => r.text()),
-        fetch(outboundUrl).then(r => r.text())
-      ]);
+        return Promise.allSettled([
+          fetch(inUrl).then(r => r.text()),
+          fetch(outUrl).then(r => r.text())
+        ]).then(([inRes, outRes]) => {
+          let inRows = [];
+          let outRows = [];
+          if (inRes.status === "fulfilled" && inRes.value.includes(",")) {
+            inRows = parseCSV(inRes.value).map(r => processRow("inbound", r, src));
+          }
+          if (outRes.status === "fulfilled" && outRes.value.includes(",")) {
+            outRows = parseCSV(outRes.value).map(r => processRow("outbound", r, src));
+          }
+          return { inRows, outRows };
+        });
+      });
 
-      let inboundData = [];
-      let outboundData = [];
+      const results = await Promise.all(fetchPromises);
+      let combinedInbound = [];
+      let combinedOutbound = [];
 
-      if (inboundRes.status === "fulfilled" && inboundRes.value.includes(",")) {
-        const rawRows = parseCSV(inboundRes.value);
-        inboundData = rawRows.map(r => processRow("inbound", r));
-      }
+      results.forEach(res => {
+        combinedInbound.push(...res.inRows);
+        combinedOutbound.push(...res.outRows);
+      });
 
-      if (outboundRes.status === "fulfilled" && outboundRes.value.includes(",")) {
-        const rawRows = parseCSV(outboundRes.value);
-        outboundData = rawRows.map(r => processRow("outbound", r));
-      }
-
-      if (inboundData.length > 0 || outboundData.length > 0) {
-        state.inbound = inboundData.length > 0 ? inboundData : state.inbound;
-        state.outbound = outboundData.length > 0 ? outboundData : state.outbound;
+      if (combinedInbound.length > 0 || combinedOutbound.length > 0) {
+        state.inbound = combinedInbound;
+        state.outbound = combinedOutbound;
         state.lastChecked = new Date().toISOString();
 
-        localStorage.setItem(SNAPSHOT_KEY + "-" + config.activeSourceId, JSON.stringify({
+        localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({
           inbound: state.inbound,
           outbound: state.outbound,
           lastChecked: state.lastChecked
         }));
 
-        showToast(`Synced "${sources.find(s=>s.id===config.activeSourceId)?.name || 'Google Sheet'}"!`);
+        showToast(`Synced ${enabledSources.length} active Google Sheet ${enabledSources.length === 1 ? 'source' : 'sources'}!`);
       }
     } catch (err) {
-      console.warn("Live fetch fallback:", err);
+      console.warn("Live multi-fetch fallback:", err);
     } finally {
       state.loading = false;
       updateDashboard();
     }
   }
 
-  // Writeback Update
+  // Submit Writeback Update
   async function submitUpdateToSheets(record, newStatus, newNote) {
     record.status = newStatus;
     if (newNote != null) record.note = newNote;
     record.quality = evaluateRecordQuality(record.direction, record);
 
-    localStorage.setItem(SNAPSHOT_KEY + "-" + config.activeSourceId, JSON.stringify({
+    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({
       inbound: state.inbound,
       outbound: state.outbound,
       lastChecked: new Date().toISOString()
@@ -591,14 +555,17 @@
 
     updateDashboard();
 
-    if (!config.webhookUrl) {
+    const targetSrc = sources.find(s => s.sheetId === record.sourceId);
+    const webhookUrl = targetSrc?.webhookUrl;
+
+    if (!webhookUrl) {
       showToast("Local record updated!");
       return;
     }
 
     try {
       showToast("Pushing writeback to Google Sheets...");
-      await fetch(config.webhookUrl, {
+      await fetch(webhookUrl, {
         method: "POST",
         mode: "no-cors",
         headers: { "Content-Type": "application/json" },
@@ -617,7 +584,7 @@
     }
   }
 
-  // Dashboard Filters
+  // Filters
   function getFilteredRecords() {
     let records = [];
     if (state.direction === "inbound") records = [...state.inbound];
@@ -644,6 +611,7 @@
         r.customer.toLowerCase().includes(q) ||
         r.invoice.toLowerCase().includes(q) ||
         r.vessel.toLowerCase().includes(q) ||
+        r.sourceName.toLowerCase().includes(q) ||
         r.note.toLowerCase().includes(q)
       );
     }
@@ -687,7 +655,7 @@
     renderTable();
   }
 
-  // Render Table
+  // Render Table with Origin Source Tags
   function renderTable() {
     const tbody = $("#table-body");
     const emptyState = $("#empty-state");
@@ -697,9 +665,9 @@
 
     if (state.loading) {
       tbody.innerHTML = `
-        <tr class="skeleton-row"><td colspan="10"><div class="skeleton-bar"></div></td></tr>
-        <tr class="skeleton-row"><td colspan="10"><div class="skeleton-bar"></div></td></tr>
-        <tr class="skeleton-row"><td colspan="10"><div class="skeleton-bar"></div></td></tr>
+        <tr class="skeleton-row"><td colspan="11"><div class="skeleton-bar"></div></td></tr>
+        <tr class="skeleton-row"><td colspan="11"><div class="skeleton-bar"></div></td></tr>
+        <tr class="skeleton-row"><td colspan="11"><div class="skeleton-bar"></div></td></tr>
       `;
       emptyState.hidden = true;
       return;
@@ -747,10 +715,13 @@
           </td>
           <td>
             ${related.length > 0 ? `
-              <span class="rel-pill" title="Linked to ${related.map(x => x.identifier).join(', ')}">
+              <span class="rel-pill" title="Linked to ${related.map(x => x.identifier + ' (' + x.sourceName + ')').join(', ')}">
                 🔗 ${related.length} Linked
               </span>
             ` : `<span class="rel-pill none">—</span>`}
+          </td>
+          <td>
+            <span class="source-origin-tag" title="Google Sheet Origin">${escapeHtml(r.sourceName)}</span>
           </td>
           <td>
             <span class="status-pill ${finished ? 'finished' : r.quality.needsAttention ? 'attention' : 'wip'}">
@@ -784,7 +755,7 @@
   function openDetailModal(record) {
     const modal = $("#detail-modal");
     $("#modal-title").textContent = record.identifier;
-    $("#modal-eyebrow").textContent = `${record.direction.toUpperCase()} · ${record.shipmentMode}`;
+    $("#modal-eyebrow").textContent = `${record.direction.toUpperCase()} · ${record.shipmentMode} · ${record.sourceName}`;
 
     const related = findRelatedRecords(record);
     const missingItems = record.quality.missing;
@@ -818,15 +789,20 @@
       </div>
 
       <div class="detail-item" style="margin-bottom:20px;">
-        <div class="detail-label">🔗 Relational Linked Shipments (${related.length})</div>
+        <div class="detail-label">Google Sheet Origin</div>
+        <div class="detail-value" style="font-size:13px;">${escapeHtml(record.sourceName)} (ID: ${record.sourceId})</div>
+      </div>
+
+      <div class="detail-item" style="margin-bottom:20px;">
+        <div class="detail-label">🔗 Cross-Sheet Relational Linked Shipments (${related.length})</div>
         ${related.length === 0 ? `
-          <div style="font-size:12px; color:var(--muted); margin-top:6px;">No linked ${record.direction === 'inbound' ? 'outbound' : 'inbound'} shipments found for PO/Invoice '${escapeHtml(record.invoice)}'.</div>
+          <div style="font-size:12px; color:var(--muted); margin-top:6px;">No cross-sheet linked ${record.direction === 'inbound' ? 'outbound' : 'inbound'} shipments found for PO/Invoice '${escapeHtml(record.invoice)}'.</div>
         ` : `
           <ul class="related-records-list">
             ${related.map(rel => `
               <li class="related-record-card">
                 <strong>${rel.direction.toUpperCase()}: ${escapeHtml(rel.identifier)}</strong> (${escapeHtml(rel.carrier)})
-                <div>Customer/Origin: ${escapeHtml(rel.customer)} | Status: ${escapeHtml(rel.status)}</div>
+                <div>Origin: ${escapeHtml(rel.sourceName)} | Status: ${escapeHtml(rel.status)}</div>
               </li>
             `).join("")}
           </ul>
@@ -909,14 +885,14 @@
     }, 3200);
   }
 
-  // Export Data
+  // Export
   function exportCSV() {
     const records = getFilteredRecords();
     if (records.length === 0) return showToast("No records to export.");
 
-    const headers = ["Direction", "Identifier", "Carrier", "Mode", "Date", "Customer", "Invoice", "Vessel", "Status"];
+    const headers = ["Direction", "Identifier", "Carrier", "Mode", "Date", "Customer", "Invoice", "Vessel", "Status", "SourceSheet"];
     const rows = records.map(r => [
-      r.direction, r.identifier, r.carrier, r.shipmentMode, r.date, r.customer, r.invoice, r.vessel, r.status
+      r.direction, r.identifier, r.carrier, r.shipmentMode, r.date, r.customer, r.invoice, r.vessel, r.status, r.sourceName
     ]);
 
     const csvContent = "data:text/csv;charset=utf-8," + [headers, ...rows].map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -946,11 +922,7 @@
 
   // Event Listeners
   function initEventListeners() {
-    loadSourcesAndConfig();
-
-    $("#header-source-select")?.addEventListener("change", (e) => {
-      switchSource(e.target.value);
-    });
+    loadSources();
 
     $$(".nav-tab").forEach(tab => {
       tab.addEventListener("click", () => {
@@ -1050,12 +1022,11 @@
 
     $("#refresh-btn")?.addEventListener("click", () => loadScheduleData(true));
     $("#clear-cache-btn")?.addEventListener("click", () => {
-      localStorage.removeItem(SNAPSHOT_KEY + "-" + config.activeSourceId);
-      showToast("Local cache cleared.");
+      localStorage.removeItem(SNAPSHOT_KEY);
+      showToast("Local snapshot cache cleared.");
       loadScheduleData(true);
     });
 
-    $("#save-cfg-btn")?.addEventListener("click", saveConfig);
     $("#open-add-source-modal-btn")?.addEventListener("click", openAddSourceModal);
     $("#close-source-modal-btn")?.addEventListener("click", closeAddSourceModal);
     $("#cancel-source-modal-btn")?.addEventListener("click", closeAddSourceModal);
