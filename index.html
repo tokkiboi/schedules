@@ -1,135 +1,361 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Expected inbound and outbound shipment schedules for SK Distribution internal operations.">
-  <title>SK Distribution — Shipping Schedules</title>
+  <meta name="description" content="Live inbound and outbound shipping schedules for SK Distribution operations hub. Direct carrier tracking, real-time Google Sheets sync, relational data linking, and logistics data diagnostics.">
+  <title>SK Distribution — Shipping Operations &amp; Relational Logistics Control</title>
+  
+  <!-- Fonts -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📦</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=DM+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
-  <script src="https://www.gstatic.com/charts/loader.js" defer></script>
-  <script src="app.js?v=status-source-v3" defer></script>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=DM+Sans:ital,opsz,wght@0,9..40,400..800;1,9..40,400..800&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="index.css">
+  <script src="app.js" defer></script>
 </head>
 <body>
   <div class="ops-app theme-editorial" id="app">
+    <!-- Top Navigation Bar -->
     <header class="topbar">
       <a class="brand" href="#top" aria-label="SK Distribution operations home">
         <span class="brand-mark">SK</span>
-        <span><strong>Distribution</strong><small>Supply chain operations</small></span>
+        <span class="brand-text">
+          <strong>Distribution</strong>
+          <small>Relational Logistics Hub</small>
+        </span>
       </a>
+
       <nav class="main-nav" aria-label="Primary navigation">
-        <a class="active" href="#schedule">Overview</a>
-        <button type="button" data-direction-link="inbound">Inbound</button>
-        <button type="button" data-direction-link="outbound">Outbound</button>
-        <a href="#sources">Sources</a>
+        <button class="nav-tab active" type="button" data-nav="overview">Overview</button>
+        <button class="nav-tab" type="button" data-nav="inbound">Inbound <span class="badge" id="nav-inbound-count">0</span></button>
+        <button class="nav-tab" type="button" data-nav="outbound">Outbound <span class="badge" id="nav-outbound-count">0</span></button>
+        <button class="nav-tab" type="button" data-nav="sources">Data Sources &amp; Drive Sync</button>
       </nav>
+
       <div class="top-actions">
-        <div class="theme-switcher" aria-label="Design version">
-          <button class="selected" type="button" data-theme="editorial" title="Warehouse Editorial">01</button>
-          <button type="button" data-theme="control" title="Control Tower">02</button>
-          <button type="button" data-theme="network" title="Route Network">03</button>
+        <div class="live-status-pill" id="live-indicator" title="Source status">
+          <span class="status-dot online"></span>
+          <span class="status-text" id="live-indicator-text">Live 2-Way Sync</span>
         </div>
-        <button class="share-button" id="share" type="button">Share view ↗</button>
+
+        <div class="theme-switcher" aria-label="Design System Theme">
+          <button class="theme-btn selected" type="button" data-theme="editorial" title="Warehouse Editorial (Industrial Warm)">01</button>
+          <button class="theme-btn" type="button" data-theme="control" title="Control Tower (Dark Neon Glass)">02</button>
+          <button class="theme-btn" type="button" data-theme="network" title="Route Network (Logistics Blue)">03</button>
+        </div>
+
+        <button class="action-btn share-btn" id="share-btn" type="button" title="Copy shareable link to current view">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 12v8a2 2 0 0 1-2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+          Share View
+        </button>
       </div>
     </header>
 
     <main id="top">
-      <section class="hero">
+      <!-- Hero Section & Route Visualization -->
+      <section class="hero-section">
         <div class="hero-content">
-          <p class="eyebrow">Buena Park · Operations board</p>
-          <h1>Expected inbound &amp; outbound shipping schedules</h1>
-          <p class="hero-copy">One shared view of arrivals, customer shipments, carrier handoffs, and source-sheet status across the distribution operation.</p>
+          <p class="eyebrow">Buena Park Hub · Operations Control Board</p>
+          <h1>Expected Shipping Schedules &amp; Relational Handoffs</h1>
+          <p class="hero-copy">Real-time tracking of inbound container arrivals, relational outbound customer shipments, carrier links, and 2-way Google Sheets writeback.</p>
+          
           <div class="hero-actions">
-            <a class="primary-button" href="#schedule">Open operations board <span>↓</span></a>
-            <button class="secondary-button" id="refresh" type="button">Refresh source</button>
+            <a class="btn primary-btn" href="#board-section">
+              Open Operations Board <span>↓</span>
+            </a>
+            <button class="btn secondary-btn" id="refresh-btn" type="button">
+              <svg class="spin-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M2.5 22v-6h6"/><path d="M2 11.5a10 10 0 0 1 18.8-4.3L21.5 8M22 12.5a10 10 0 0 1-18.8 4.3L2.5 16"/></svg>
+              Sync Sheets Source
+            </button>
           </div>
         </div>
-        <div class="hero-visual" aria-hidden="true">
-          <div class="route-grid">
-            <span class="route-node port">Port</span>
-            <span class="route-node warehouse">Buena Park<br>Warehouse</span>
-            <span class="route-node customer one">Customer</span>
-            <span class="route-node customer two">Customer</span>
-            <i class="route-line line-one"></i><i class="route-line line-two"></i><i class="route-line line-three"></i>
+
+        <div class="hero-visual">
+          <div class="route-map-card">
+            <div class="route-map-header">
+              <span class="route-title">Live Relational Pipeline</span>
+              <span class="route-pulse">● Active monitoring</span>
+            </div>
+            <div class="route-nodes-container">
+              <div class="route-node node-port">
+                <div class="node-icon">⚓</div>
+                <div class="node-label">Port / Origin</div>
+                <div class="node-sub" id="stat-port-sub">In-Transit</div>
+              </div>
+              <div class="route-path path-1">
+                <span class="pulse-dot"></span>
+              </div>
+              <div class="route-node node-hub">
+                <div class="node-icon">🏭</div>
+                <div class="node-label">Buena Park Hub</div>
+                <div class="node-sub">Distribution Hub</div>
+              </div>
+              <div class="route-path path-2">
+                <span class="pulse-dot"></span>
+              </div>
+              <div class="route-node node-dest">
+                <div class="node-icon">🚚</div>
+                <div class="node-label">Customers / Carriers</div>
+                <div class="node-sub" id="stat-dest-sub">Handoffs</div>
+              </div>
+            </div>
           </div>
-        </div>
-        <div class="kpi-strip">
-          <article><span>Expected inbound</span><strong id="kpi-inbound">—</strong><small>active shipments</small></article>
-          <article><span>Expected outbound</span><strong id="kpi-outbound">—</strong><small>active schedules</small></article>
-          <article><span>Needs data review</span><strong id="kpi-review">—</strong><small>active records flagged</small></article>
-          <article><span>Live sources</span><strong id="kpi-sources">—</strong><small>browser access verified</small></article>
-          <article><span>Last checked</span><strong class="refresh-time" id="kpi-checked">—</strong><small>auto-check · 2 min</small></article>
         </div>
       </section>
 
-      <section class="integrity-strip" id="integrity" aria-label="Schedule integrity monitor">
-        <div><span class="integrity-pulse"></span><strong>Schedule monitor active while this view is open</strong><small>Comparing dates, statuses, identifiers, carriers, and shipment types every 2 minutes</small></div>
-        <button type="button" id="review-shortcut"><strong id="review-total">0</strong><span>records need review</span></button>
-        <div class="source-health"><strong id="source-health-title">Checking source access…</strong><small id="source-health-detail">No schedule is shown until the source read succeeds.</small></div>
-      </section>
-
-      <section class="expectation-grid" aria-label="Next expected schedules">
-        <article class="schedule-preview preview-inbound">
-          <header><div><span class="preview-icon">↓</span><strong>Next inbound</strong></div><button type="button" data-open="inbound">View all →</button></header>
-          <div class="preview-list" id="preview-inbound"><p class="preview-empty">Loading expected shipments…</p></div>
-        </article>
-        <article class="schedule-preview preview-outbound">
-          <header><div><span class="preview-icon">↗</span><strong>Next outbound</strong></div><button type="button" data-open="outbound">View all →</button></header>
-          <div class="preview-list" id="preview-outbound"><p class="preview-empty">Loading expected schedules…</p></div>
-        </article>
-      </section>
-
-      <section class="operations-panel" id="schedule">
-        <div class="section-heading">
-          <div><p class="eyebrow">Live Google Sheets source</p><h2>Shipping operations board</h2></div>
-          <div class="live-state" id="live-state"><span class="live-dot"></span>Connecting to the Logistics workbook…</div>
-        </div>
-
-        <div class="change-monitor">
-          <div><span class="change-label">Change watch</span><strong id="change-count">No changes detected in this browser yet</strong></div>
-          <div class="change-feed" id="change-feed"><span class="change-empty">Added, removed, rescheduled, cancelled, shipped, completed, and reclassified records will appear here.</span></div>
-        </div>
-
-        <div class="toolbar">
-          <div class="direction-tabs" role="tablist" aria-label="Schedule direction">
-            <button class="active" id="tab-inbound" type="button" data-direction="inbound" role="tab">Inbound <span>0</span></button>
-            <button id="tab-outbound" type="button" data-direction="outbound" role="tab">Outbound <span>0</span></button>
+      <!-- KPI Metrics Overview Grid -->
+      <section class="kpi-grid">
+        <div class="kpi-card" data-kpi="inbound">
+          <div class="kpi-header">
+            <span class="kpi-title">Inbound Active</span>
+            <span class="kpi-icon">📥</span>
           </div>
-          <label class="search-box"><span>⌕</span><input id="search" type="search" placeholder="Search shipment, invoice, customer, carrier…"></label>
-          <select id="mode-filter" aria-label="Filter by shipment type"><option value="">All shipment types</option></select>
-          <label class="finished-toggle"><input id="attention-only" type="checkbox"> Needs review</label>
-          <label class="finished-toggle"><input id="show-finished" type="checkbox"> Show finished</label>
+          <div class="kpi-value" id="kpi-inbound-val">0</div>
+          <div class="kpi-foot" id="kpi-inbound-foot">Arrivals pending</div>
         </div>
 
-        <div class="table-shell">
-          <table>
-            <thead><tr><th>Date / ETA</th><th id="party-heading">Shipment / Invoice</th><th>Container / PRO / Tracking</th><th>Carrier &amp; type</th><th>Route</th><th>Data check</th><th>Source</th><th>Status</th></tr></thead>
-            <tbody id="schedule-body"><tr class="empty-row"><td colspan="8">Loading expected schedules…</td></tr></tbody>
+        <div class="kpi-card" data-kpi="outbound">
+          <div class="kpi-header">
+            <span class="kpi-title">Outbound Active</span>
+            <span class="kpi-icon">📤</span>
+          </div>
+          <div class="kpi-value" id="kpi-outbound-val">0</div>
+          <div class="kpi-foot" id="kpi-outbound-foot">Shipments in progress</div>
+        </div>
+
+        <div class="kpi-card" data-kpi="relational">
+          <div class="kpi-header">
+            <span class="kpi-title">Relational Linked</span>
+            <span class="kpi-icon">🔗</span>
+          </div>
+          <div class="kpi-value" id="kpi-relational-val">0</div>
+          <div class="kpi-foot" id="kpi-relational-foot">Inbound ⇄ Outbound PO matches</div>
+        </div>
+
+        <div class="kpi-card" data-kpi="quality">
+          <div class="kpi-header">
+            <span class="kpi-title">Data Quality Score</span>
+            <span class="kpi-icon">📊</span>
+          </div>
+          <div class="kpi-value" id="kpi-quality-val">--%</div>
+          <div class="kpi-foot" id="kpi-quality-foot">Complete record ratio</div>
+        </div>
+      </section>
+
+      <!-- Operations Board Section -->
+      <section class="board-section" id="board-section">
+        <div class="board-controls">
+          <div class="search-box">
+            <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="search" id="search-input" placeholder="Search container, PRO #, carrier, customer, PO, invoice..." aria-label="Search schedule records">
+            <button class="clear-search-btn" id="clear-search" type="button" aria-label="Clear search" hidden>&times;</button>
+          </div>
+
+          <div class="filter-group">
+            <div class="chip-select-group" id="direction-chips">
+              <button class="chip active" type="button" data-direction="">All</button>
+              <button class="chip" type="button" data-direction="inbound">Inbound</button>
+              <button class="chip" type="button" data-direction="outbound">Outbound</button>
+            </div>
+
+            <select id="mode-select" class="custom-select" aria-label="Filter by shipment mode">
+              <option value="">All Shipment Modes</option>
+              <option value="Small parcel">Small Parcel</option>
+              <option value="Air freight">Air Freight</option>
+              <option value="Ocean freight">Ocean Freight</option>
+              <option value="Ground freight">Ground Freight</option>
+              <option value="Unclassified">Unclassified</option>
+            </select>
+
+            <label class="toggle-chip" title="Show only items needing attention">
+              <input type="checkbox" id="attention-toggle">
+              <span class="toggle-indicator"></span>
+              <span>Needs Attention</span>
+            </label>
+
+            <label class="toggle-chip" title="Show finished or delivered shipments">
+              <input type="checkbox" id="finished-toggle">
+              <span class="toggle-indicator"></span>
+              <span>Show Completed</span>
+            </label>
+
+            <div class="dropdown-wrapper">
+              <button class="action-btn export-btn" id="export-dropdown-btn" type="button">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Export
+              </button>
+              <div class="dropdown-menu" id="export-menu" hidden>
+                <button type="button" id="export-csv">Export Current View (CSV)</button>
+                <button type="button" id="export-json">Export Current View (JSON)</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="board-header-summary">
+          <div class="summary-left">
+            <h2 id="view-title">Inbound Operations</h2>
+            <span class="record-counter" id="record-count">0 items matching filter</span>
+          </div>
+          <div class="summary-right">
+            <span class="last-sync-tag" id="last-updated-tag">Last checked: Just now</span>
+          </div>
+        </div>
+
+        <!-- Table Container -->
+        <div class="table-container">
+          <table class="schedule-table" id="schedule-table">
+            <thead>
+              <tr>
+                <th>Direction / Mode</th>
+                <th>Container / Tracking / PRO</th>
+                <th>Carrier / Vessel</th>
+                <th>Date (ETA / Ship)</th>
+                <th>Customer / Origin</th>
+                <th>Invoice / PO</th>
+                <th>Relational Link</th>
+                <th>Status</th>
+                <th>Quality</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="table-body">
+              <!-- Loading Skeleton Rows -->
+              <tr class="skeleton-row"><td colspan="10"><div class="skeleton-bar"></div></td></tr>
+              <tr class="skeleton-row"><td colspan="10"><div class="skeleton-bar"></div></td></tr>
+              <tr class="skeleton-row"><td colspan="10"><div class="skeleton-bar"></div></td></tr>
+            </tbody>
           </table>
+
+          <div class="empty-state" id="empty-state" hidden>
+            <div class="empty-icon">🔍</div>
+            <h3>No matching shipments found</h3>
+            <p>Try adjusting your search criteria or filters, or toggle "Show Completed".</p>
+            <button class="btn secondary-btn" id="reset-filters-btn" type="button">Reset Filters</button>
+          </div>
         </div>
-        <p class="row-limit" id="row-limit" hidden></p>
       </section>
 
-      <section class="sources-panel" id="sources">
-        <div class="section-heading"><div><p class="eyebrow">Relational source registry</p><h2>Operational workbooks</h2></div><p>Every displayed schedule links back to its exact source row for traceable correction.</p></div>
-        <div class="source-cards">
-          <a class="source-card" href="https://docs.google.com/spreadsheets/d/1M-vZ24Yw4ZN7R7b_473cVn8kny8DznTakSsD3VQsCzc/edit" target="_blank" rel="noreferrer">
-            <span class="source-icon source-mint">LM</span><div><strong>LOGISTICS MASTER 2026</strong><p>Primary inbound and consolidated outbound schedule</p><small id="logistics-detail">Checking direct browser access…</small></div><span class="source-state state-live" id="logistics-state">checking</span>
-          </a>
-          <a class="source-card" href="https://docs.google.com/spreadsheets/d/14lH9SQzTLj8MR7UbxMfkoTDDlzhPoE8CqHV3IpK450I/edit" target="_blank" rel="noreferrer">
-            <span class="source-icon source-blue">WI</span><div><strong>WMS Invoice and Issue</strong><p>Invoice, ship-date, method, and issue enrichment</p><small>Private workbook · linked for authorized users</small></div><span class="source-state state-linked">linked</span>
-          </a>
-          <a class="source-card" href="https://docs.google.com/spreadsheets/d/12Aty04yiLPPqz06AFDM8Y1Log2jEOqdXDqwiUV5yVX8/edit" target="_blank" rel="noreferrer">
-            <span class="source-icon source-lavender">ND</span><div><strong>NATIONAL / IHERB / MBX Dimensions</strong><p>National, ULTA, iHerb, TJX/ROSS schedules and dimensions</p><small>Private workbook · linked for authorized users</small></div><span class="source-state state-linked">linked</span>
-          </a>
+      <!-- Relational Data Sources & Google Drive/Sheets Bi-Directional Manager -->
+      <section class="sources-section" id="sources-section">
+        <div class="sources-card">
+          <div class="sources-header">
+            <div>
+              <h3>Relational Google Drive &amp; Sheets Sync Manager</h3>
+              <p class="sources-sub">Configure bi-directional read/write links to your Google Sheets database and Apps Script endpoints.</p>
+            </div>
+            <div class="sources-actions">
+              <button class="btn secondary-btn" id="clear-cache-btn" type="button">Reset Local Cache</button>
+              <a class="btn primary-btn" id="sheet-direct-link" href="https://docs.google.com/spreadsheets/d/1M-vZ24Yw4ZN7R7b_473cVn8kny8DznTakSsD3VQsCzc" target="_blank" rel="noopener">Open Master Sheet ↗</a>
+            </div>
+          </div>
+
+          <!-- Configuration Form Grid -->
+          <div class="config-grid">
+            <div class="config-box">
+              <h4>1. Master Google Sheet ID</h4>
+              <p class="config-desc">Google Drive Spreadsheet ID extracted from your Google Sheets URL.</p>
+              <input type="text" id="cfg-sheet-id" class="config-input" value="1M-vZ24Yw4ZN7R7b_473cVn8kny8DznTakSsD3VQsCzc">
+            </div>
+
+            <div class="config-box">
+              <h4>2. Sheet Tab Names</h4>
+              <div class="inputs-row">
+                <input type="text" id="cfg-inbound-tab" class="config-input" value="Inbound" placeholder="Inbound tab name">
+                <input type="text" id="cfg-outbound-tab" class="config-input" value="Outbound" placeholder="Outbound tab name">
+              </div>
+            </div>
+
+            <div class="config-box full-width">
+              <h4>3. Writeback Sync (Google Apps Script Webhook URL)</h4>
+              <p class="config-desc">Enter your Google Apps Script Web App URL to enable instant 2-way writeback from this app back to your live Google Sheet.</p>
+              <input type="url" id="cfg-webhook-url" class="config-input" placeholder="https://script.google.com/macros/s/AKfycb.../exec">
+            </div>
+          </div>
+
+          <div class="sources-footer-actions">
+            <button class="btn primary-btn" id="save-cfg-btn" type="button">Save Connection Settings</button>
+            <button class="btn secondary-btn" id="show-script-btn" type="button">Copy Google Apps Script Webhook Code 📋</button>
+          </div>
+
+          <div class="script-modal-code" id="script-code-box" hidden>
+            <div class="code-box-header">
+              <span>Google Apps Script (Paste into Extensions → Apps Script in Google Sheets)</span>
+              <button class="btn secondary-btn" id="copy-script-btn" style="padding:4px 8px;" type="button">Copy Code</button>
+            </div>
+            <pre><code id="apps-script-code">function doPost(e) {
+  var data = JSON.parse(e.postData.contents);
+  var sheetName = data.direction === "inbound" ? "Inbound" : "Outbound";
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(sheetName);
+  
+  if (!sheet) return ContentService.createTextOutput(JSON.stringify({status: "error", message: "Sheet not found"})).setMimeType(ContentService.MimeType.JSON);
+  
+  var values = sheet.getDataRange().getValues();
+  var headers = values[0];
+  var idCol = headers.indexOf("CONTAINER NO") !== -1 ? headers.indexOf("CONTAINER NO") : headers.indexOf("PRO NO");
+  var statusCol = headers.indexOf("STATUS");
+  
+  if (idCol === -1) idCol = 0;
+  
+  for (var i = 1; i < values.length; i++) {
+    if (String(values[i][idCol]).trim() === String(data.identifier).trim()) {
+      if (statusCol !== -1 && data.status) sheet.getRange(i + 1, statusCol + 1).setValue(data.status);
+      return ContentService.createTextOutput(JSON.stringify({status: "success", updatedRow: i + 1})).setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+  
+  return ContentService.createTextOutput(JSON.stringify({status: "not_found"})).setMimeType(ContentService.MimeType.JSON);
+}</code></pre>
+          </div>
+
+          <div class="sources-metrics">
+            <div class="metric-box">
+              <span class="metric-lbl">Inbound Total Rows</span>
+              <span class="metric-val" id="source-inbound-total">0</span>
+            </div>
+            <div class="metric-box">
+              <span class="metric-lbl">Outbound Total Rows</span>
+              <span class="metric-val" id="source-outbound-total">0</span>
+            </div>
+            <div class="metric-box">
+              <span class="metric-lbl">Relational Connections</span>
+              <span class="metric-val" id="source-rel-total">0</span>
+            </div>
+            <div class="metric-box">
+              <span class="metric-lbl">2-Way Writeback</span>
+              <span class="metric-val status-ok" id="source-writeback-status">Ready</span>
+            </div>
+          </div>
         </div>
       </section>
     </main>
 
-    <footer><span><strong>SK</strong> Distribution · Buena Park, California</span><span>Public schedule view · Google Sheets source control</span></footer>
-    <div class="toast" id="toast" role="status" hidden></div>
+    <!-- Shipment Detail Drawer Modal with Relational Mapping & Edit Form -->
+    <div class="modal-overlay" id="detail-modal" hidden>
+      <div class="modal-card" role="dialog" aria-labelledby="modal-title" aria-modal="true">
+        <header class="modal-header">
+          <div>
+            <span class="modal-eyebrow" id="modal-eyebrow">Shipment Record</span>
+            <h2 class="modal-title" id="modal-title">Container Details</h2>
+          </div>
+          <button class="modal-close" id="modal-close-btn" type="button" aria-label="Close details">&times;</button>
+        </header>
+
+        <div class="modal-body" id="modal-body">
+          <!-- Dynamic details content rendered via JS -->
+        </div>
+
+        <footer class="modal-footer" id="modal-footer">
+          <!-- Tracking link button & actions -->
+        </footer>
+      </div>
+    </div>
+
+    <!-- Notification Toast Container -->
+    <div class="toast-container" id="toast-container"></div>
   </div>
 </body>
 </html>
