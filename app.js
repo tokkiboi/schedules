@@ -1,1098 +1,667 @@
-/**
- * SK Distribution — Multi-Sheet Relational Shipping Schedules & Drive Pipeline Engine
- */
+/* Live Logistics Dashboard
+   Reads Google Sheets through the Google Visualization API.
+   The spreadsheet must be published/shared publicly for browser access.
+*/
 
-(() => {
-  "use strict";
-
-  const DEFAULT_MASTER_ID = "1M-vZ24Yw4ZN7R7b_473cVn8kny8DznTakSsD3VQsCzc";
-  const SNAPSHOT_KEY = "sk-pages-schedule-snapshot-multi-v3";
-  const SOURCES_KEY = "sk-pages-schedule-sources-multi-v3";
-  const FINISHED_SET = new Set(["SHIPPED", "DELIVERED", "RECEIVED", "COMPLETED", "CANCELLED", "CANCELED"]);
-
-  // Multi-Source Registry Presets from StyleKorean Logistics Master Pipeline
-  const defaultSources = [
-    {
-      id: "master-2026",
-      name: "StyleKorean Logistics Master 2026",
-      sheetId: DEFAULT_MASTER_ID,
-      inboundTab: "Inbound",
-      outboundTab: "Outbound",
-      webhookUrl: "",
-      enabled: true
+const CONFIG = {
+  spreadsheetId: "1M-vZ24Yw4ZN7R7b_473cVn8kny8DznTakSsD3VQsCzc",
+  sheetUrl: "https://docs.google.com/spreadsheets/d/1M-vZ24Yw4ZN7R7b_473cVn8kny8DznTakSsD3VQsCzc",
+  sheets: {
+    outbound: {
+      name: "All Outbound Shipping Schedule",
+      range: "A3:W7000"
     },
-    {
-      id: "buena-park",
-      name: "StyleKorean Buena Park Hub",
-      sheetId: DEFAULT_MASTER_ID,
-      inboundTab: "Inbound",
-      outboundTab: "Outbound",
-      webhookUrl: "",
-      enabled: true
+    inbound: {
+      name: "INBOUND SHIPMENTS DATA",
+      range: "A3:Q1200"
     },
-    {
-      id: "korea-cargo",
-      name: "StyleKorean Korea Air & Ocean Freight",
-      sheetId: DEFAULT_MASTER_ID,
-      inboundTab: "Inbound",
-      outboundTab: "Outbound",
-      webhookUrl: "",
-      enabled: true
-    },
-    {
-      id: "outbound-handoffs",
-      name: "StyleKorean Outbound Carrier Handoffs",
-      sheetId: DEFAULT_MASTER_ID,
-      inboundTab: "Inbound",
-      outboundTab: "Outbound",
-      webhookUrl: "",
-      enabled: true
-    }
-  ];
-
-  let sources = [...defaultSources];
-
-  // Application State
-  const state = {
-    inbound: [],
-    outbound: [],
-    direction: "", // "" = All, "inbound", "outbound"
-    query: "",
-    mode: "",
-    attentionOnly: false,
-    showFinished: false,
-    lastChecked: null,
-    loading: true,
-    activeNav: "overview",
-    theme: "editorial"
-  };
-
-  // Selectors
-  const $ = (selector) => document.querySelector(selector);
-  const $$ = (selector) => Array.from(document.querySelectorAll(selector));
-
-  const escapeHtml = (val) => String(val ?? "").replace(/[&<>'"]/g, (c) => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
-  })[c]);
-
-  const normalizedStatus = (val) => String(val || "Work in Progress").trim().replace(/\s+/g, " ");
-  const isFinished = (val) => FINISHED_SET.has(normalizedStatus(val).toUpperCase());
-
-  // URL Sheet ID Extractor
-  function extractSheetIdFromUrl(input) {
-    const text = String(input || "").trim();
-    const match = text.match(/\/d\/([a-zA-Z0-9-_]{25,})\//) || text.match(/^([a-zA-Z0-9-_]{25,})$/);
-    return match ? match[1] : text;
-  }
-
-  // Load Saved Sources State
-  function loadSources() {
-    const savedSources = localStorage.getItem(SOURCES_KEY);
-    if (savedSources) {
-      try {
-        const parsed = JSON.parse(savedSources);
-        if (Array.isArray(parsed) && parsed.length > 0) sources = parsed;
-      } catch (e) {
-        console.warn("Could not parse saved sources:", e);
-      }
-    }
-    renderSourceCards();
-  }
-
-  function saveSources() {
-    localStorage.setItem(SOURCES_KEY, JSON.stringify(sources));
-    renderSourceCards();
-  }
-
-  function renderSourceCards() {
-    const activeSourcesCount = sources.filter(s => s.enabled).length;
-    const liveText = $("#live-indicator-text");
-    if (liveText) liveText.textContent = `${activeSourcesCount} Active ${activeSourcesCount === 1 ? 'Sheet' : 'Sheets'}`;
-
-    const activeCountVal = $("#source-active-count");
-    if (activeCountVal) activeCountVal.textContent = `${activeSourcesCount} Connected`;
-
-    const cardsList = $("#sources-cards-list");
-    if (cardsList) {
-      cardsList.innerHTML = sources.map((src, index) => `
-        <div class="source-card-item ${src.enabled ? 'enabled' : ''}">
-          <div class="source-checkbox-header">
-            <span class="source-card-title">${escapeHtml(src.name)}</span>
-            <label class="toggle-chip" title="Toggle active sync for this source">
-              <input type="checkbox" class="source-toggle-checkbox" data-index="${index}" ${src.enabled ? 'checked' : ''}>
-              <span class="toggle-indicator"></span>
-              <span style="font-size:10px;">${src.enabled ? 'Enabled' : 'Disabled'}</span>
-            </label>
-          </div>
-          <div class="source-card-id">ID: <code>${src.sheetId}</code></div>
-          <div style="font-size:11px; color:var(--muted); margin-bottom:12px;">
-            Tabs: Inbound (${escapeHtml(src.inboundTab)}) · Outbound (${escapeHtml(src.outboundTab)})
-          </div>
-          <div class="source-card-links">
-            <a class="btn secondary-btn" href="https://docs.google.com/spreadsheets/d/${src.sheetId}" target="_blank" rel="noopener" style="padding:4px 10px;">
-              Open Drive Sheet ↗
-            </a>
-            ${sources.length > 1 ? `
-              <button class="btn secondary-btn remove-src-btn" data-index="${index}" style="padding:4px 8px; color:var(--danger);" type="button">Remove</button>
-            ` : ""}
-          </div>
-        </div>
-      `).join("");
-
-      $$(".source-toggle-checkbox").forEach(chk => {
-        chk.addEventListener("change", (e) => {
-          const idx = Number(chk.getAttribute("data-index"));
-          if (sources[idx]) {
-            sources[idx].enabled = e.target.checked;
-            saveSources();
-            loadScheduleData(true);
-          }
-        });
-      });
-
-      $$(".remove-src-btn").forEach(btn => {
-        btn.addEventListener("click", () => {
-          const idx = Number(btn.getAttribute("data-index"));
-          sources.splice(idx, 1);
-          saveSources();
-          loadScheduleData(true);
-        });
-      });
+    importSchedule: {
+      name: "INBOUND SHIPMENTS DATA",
+      range: "U238:AI260"
     }
   }
-
-  function saveNewSource() {
-    const name = $("#new-source-name")?.value.trim();
-    const rawUrl = $("#new-source-url")?.value.trim();
-    const inbound = $("#new-source-inbound")?.value.trim() || "Inbound";
-    const outbound = $("#new-source-outbound")?.value.trim() || "Outbound";
-
-    if (!name || !rawUrl) return showToast("Please enter a source name and Google Sheet URL.");
-
-    const sheetId = extractSheetIdFromUrl(rawUrl);
-    const newId = "source-" + Date.now();
-
-    const newSrc = {
-      id: newId,
-      name,
-      sheetId,
-      inboundTab: inbound,
-      outboundTab: outbound,
-      webhookUrl: "",
-      enabled: true
-    };
-
-    sources.push(newSrc);
-    saveSources();
-    closeAddSourceModal();
-    showToast(`Added and connected Google Sheet source "${name}"!`);
-    loadScheduleData(true);
-  }
-
-  // Row Value Helper
-  function getRowValue(row, ...keys) {
-    if (!row) return "";
-    for (const key of keys) {
-      const upper = String(key).toUpperCase();
-      for (const prop of Object.keys(row)) {
-        if (prop.toUpperCase() === upper && row[prop] != null && String(row[prop]).trim()) {
-          return String(row[prop]).trim();
-        }
-      }
-    }
-    return "";
-  }
-
-  // Date Parsing
-  function parseDate(input) {
-    const text = String(input || "").trim();
-    if (!text) return Number.MAX_SAFE_INTEGER;
-    
-    if (/^\d{5}(?:\.\d+)?$/.test(text)) {
-      const serial = Number(text);
-      if (serial >= 30000 && serial <= 70000) {
-        return (serial - 25569) * 86400000;
-      }
-    }
-
-    const parts = text.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?/);
-    if (parts) {
-      let year = parts[3] ? Number(parts[3]) : new Date().getFullYear();
-      if (year < 100) year += 2000;
-      return new Date(year, Number(parts[1]) - 1, Number(parts[2])).getTime();
-    }
-
-    const parsed = Date.parse(text);
-    return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : parsed;
-  }
-
-  function formatDate(input) {
-    const time = parseDate(input);
-    if (time === Number.MAX_SAFE_INTEGER) return input || "—";
-    return new Intl.DateTimeFormat("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" }).format(new Date(time));
-  }
-
-  function relativeTimeText(input) {
-    const time = parseDate(input);
-    if (time === Number.MAX_SAFE_INTEGER) return "";
-    const diffDays = Math.round((time - Date.now()) / (1000 * 60 * 60 * 24));
-    if (diffDays === 0) return "Today";
-    if (diffDays === 1) return "Tomorrow";
-    if (diffDays === -1) return "Yesterday";
-    if (diffDays > 1) return `In ${diffDays} days`;
-    return `${Math.abs(diffDays)} days ago`;
-  }
-
-  function isValidDate(text) {
-    const time = parseDate(text);
-    if (time === Number.MAX_SAFE_INTEGER) return false;
-    const year = new Date(time).getFullYear();
-    const current = new Date().getFullYear();
-    return year >= current - 2 && year <= current + 3;
-  }
-
-  // Carrier Detection Engine
-  function detectCarrier(identifier, contextValue, fallback = "") {
-    const id = String(identifier || "").replace(/\s+/g, "").toUpperCase();
-    const context = String(contextValue || "").toUpperCase();
-
-    if (/^1Z[A-Z0-9]{16}$/.test(id) || id === "UPS" || context.includes("UPS")) return "UPS";
-    if (/^9[234]\d{17,21}$/.test(id) || id === "USPS" || context.includes("USPS")) return "USPS";
-    if (/FEDEX|FDX/.test(context) || id === "FEDEX") return "FedEx";
-    if (context.includes("DHL") || id === "DHL") return "DHL";
-    if (context.includes("AMAZON") || id === "AMAZON" || /^TBA\d+/.test(id)) return "Amazon Logistics";
-    if (/KOREAN AIR/.test(context) || /^180-?\d{8}$/.test(id)) return "Korean Air Cargo";
-    if (/^(HMMU|HDMU)/.test(id) || context.includes("HMM")) return "HMM";
-    if (/^(MAEU|MSKU|MRSU)/.test(id) || context.includes("MAERSK")) return "Maersk";
-    if (/^SMCU/.test(id) || context.includes("SM LINE")) return "SM Line";
-    if (/^ONEU/.test(id)) return "ONE";
-    if (/^KMTU/.test(id)) return "KMTC";
-    if (/^(MSCU|MEDU)/.test(id) || context.includes("MSC")) return "MSC";
-    if (/^EGLV/.test(id) || context.includes("EVERGREEN")) return "Evergreen";
-    if (/^OOLU/.test(id) || context.includes("OOCL")) return "OOCL";
-    if (/^COSU/.test(id) || context.includes("COSCO")) return "COSCO";
-    if (/^CMAU/.test(id) || context.includes("CMA CGM")) return "CMA CGM";
-    if (/^YMLU/.test(id) || context.includes("YANG MING")) return "Yang Ming";
-    if (/^ZIMU/.test(id) || context.includes("ZIM")) return "ZIM";
-
-    return String(fallback || "").trim();
-  }
-
-  // Shipment Mode Classifier
-  function classifyMode(direction, row, identifier, carrier) {
-    const declared = getRowValue(row, "CARRIER TYPE").toUpperCase();
-    const context = [
-      identifier, carrier,
-      getRowValue(row, "VESSEL / FLIGHT", "SHIPPING METHOD", "SHIPMENT TYPE", "NOTE"),
-      getRowValue(row, "MBL", "HBL", "CONTAINER", "AWB"),
-      getRowValue(row, "PALLET TYPE", "WEIGHT (LBS)")
-    ].join(" ").toUpperCase();
-
-    if (/UPS|USPS|FEDEX|FDX|DHL|AMAZON|TBA\d+/.test(context)) return "Small parcel";
-    if (/^\d{3}-?\d{8}$/.test(String(identifier).replace(/\s+/g, "")) || /\bAIR\b|AIRFREIGHT|AIR FREIGHT|FLIGHT|\bAWB\b|KOREAN AIR/.test(context)) return "Air freight";
-    if (/^[A-Z]{4}\d{7}$/.test(String(identifier).replace(/\s+/g, ""))) return "Ocean freight";
-    if (declared.includes("AIR")) return "Air freight";
-    if (declared.includes("OCEAN")) return "Ocean freight";
-    if (/\bOCEAN\b|VESSEL|CONTAINER|\bMBL\b|\bHBL\b|\bFCL\b|\bLCL\b/.test(context)) return "Ocean freight";
-    if (direction === "outbound" && (/LTL|FTL|TRUCK|FREIGHT|PALLET|PRO#/.test(context) || (identifier && carrier))) return "Ground freight";
-
-    return "Unclassified";
-  }
-
-  // Direct Tracking URL Generator
-  function buildTrackingUrl(identifier, carrier) {
-    const id = String(identifier || "").replace(/\s+/g, "").toUpperCase();
-    if (!id) return "";
-    const encoded = encodeURIComponent(id);
-
-    if (/^1Z[A-Z0-9]{16}$/.test(id) || /UPS/i.test(carrier)) return `https://www.ups.com/track?tracknum=${encoded}`;
-    if (/^9[234]\d{17,21}$/.test(id) || /USPS/i.test(carrier)) return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encoded}`;
-    if (/FEDEX|FDX/i.test(carrier)) return `https://www.fedex.com/fedextrack/?trknbr=${encoded}`;
-    if (/DHL/i.test(carrier)) return `https://www.dhl.com/us-en/home/tracking/tracking-express.html?submit=1&tracking-id=${encoded}`;
-    if (/AMAZON/i.test(carrier) || /^TBA\d+/.test(id)) return "https://track.amazon.com/";
-    if (/^HMMU/.test(id) || /HMM/i.test(carrier)) return `https://www.hmm21.com/e-service/general/trackNTrace/TrackNTrace.do?searchType=CNTR&searchNo=${encoded}`;
-    if (/^(MAEU|MSKU|MRSU)/.test(id) || /MAERSK/i.test(carrier)) return `https://www.maersk.com/tracking/${encoded}`;
-    if (/^SMCU/.test(id)) return `https://esvc.smlines.com/smline/CUP_HOM_3301GS.do?search_name=${encoded}&search_type=C`;
-    if (/ONE/i.test(carrier) || /^ONEU/.test(id)) return `https://ecomm.one-line.com/one-ecom/manage-shipment/cargo-tracking?trakNoParam=${encoded}`;
-    if (/MSC/i.test(carrier)) return "https://www.msc.com/en/track-a-shipment";
-    if (/EVERGREEN/i.test(carrier)) return "https://ct.shipmentlink.com/servlet/TDB1_CargoTracking.do";
-    if (/OOCL/i.test(carrier)) return "https://www.oocl.com/eng/ourservices/eservices/cargotracking/Pages/cargotracking.aspx";
-    if (/COSCO/i.test(carrier)) return "https://elines.coscoshipping.com/ebusiness/cargoTracking";
-    if (/CMA CGM/i.test(carrier)) return `https://www.cma-cgm.com/ebusiness/tracking/search?SearchBy=Container&Reference=${encoded}`;
-
-    return `https://www.17track.net/en?nums=${encoded}`;
-  }
-
-  // Quality Assessment Logic
-  function evaluateRecordQuality(direction, record) {
-    const missing = [];
-    if (!record.date) missing.push(direction === "inbound" ? "ETA" : "Ship date");
-    else if (!isValidDate(record.date)) missing.push("Valid date format");
-    if (!record.identifier) missing.push(direction === "inbound" ? "Container / MBL / HBL / AWB" : "PRO / Tracking / BOL");
-    if (!record.carrier) missing.push("Carrier name");
-    if (record.shipmentMode === "Unclassified") missing.push("Shipment mode");
-    if (direction === "outbound" && !record.customer) missing.push("Customer name");
-    if (!record.invoice) missing.push("Invoice / PO #");
-    if (!record.trackingUrl) missing.push("Tracking link");
-
-    const totalFields = 7;
-    const score = Math.max(0, Math.round(((totalFields - missing.length) / totalFields) * 100));
-    return { score, missing, needsAttention: missing.length > 0 };
-  }
-
-  // Cross-Sheet Relational Linking Engine
-  function findRelatedRecords(record) {
-    if (!record) return [];
-    const targetSet = record.direction === "inbound" ? state.outbound : state.inbound;
-    const invoiceKey = record.invoice.trim().toLowerCase();
-    const idKey = record.identifier.trim().toLowerCase();
-
-    if (invoiceKey === "—" && idKey === "n/a") return [];
-
-    return targetSet.filter(r => {
-      const rInv = r.invoice.trim().toLowerCase();
-      const rId = r.identifier.trim().toLowerCase();
-      const rNote = r.note.trim().toLowerCase();
-
-      if (invoiceKey !== "—" && rInv !== "—" && (rInv === invoiceKey || rNote.includes(invoiceKey))) return true;
-      if (idKey !== "n/a" && rId !== "n/a" && (rId === idKey || rNote.includes(idKey))) return true;
-      return false;
-    });
-  }
-
-  // Process Row
-  function processRow(direction, rawRow, sourceMeta) {
-    const identifier = getRowValue(rawRow, "CONTAINER NO", "CONTAINER", "MBL", "HBL", "PRO NO", "PRO #", "TRACKING NO", "TRACKING", "AWB", "BOL");
-    const carrierContext = getRowValue(rawRow, "CARRIER", "LINE", "SHIPPING LINE", "CARRIER TYPE", "METHOD");
-    const carrier = detectCarrier(identifier, carrierContext, carrierContext);
-    const mode = classifyMode(direction, rawRow, identifier, carrier);
-    const date = getRowValue(rawRow, "ETA", "EXPECTED ARRIVAL", "SHIP DATE", "SHIPPED DATE", "DATE");
-    const customer = getRowValue(rawRow, "CUSTOMER", "CLIENT", "CONSIGNEE", "SHIP TO", "ORIGIN", "SUPPLIER");
-    const invoice = getRowValue(rawRow, "INVOICE", "INVOICE NO", "PO", "PO NO", "REF");
-    const vessel = getRowValue(rawRow, "VESSEL / FLIGHT", "VESSEL", "FLIGHT", "TRUCK");
-    const status = normalizedStatus(getRowValue(rawRow, "STATUS", "STATE"));
-    const note = getRowValue(rawRow, "NOTE", "REMARKS", "COMMENTS");
-    const trackingUrl = buildTrackingUrl(identifier, carrier);
-
-    const record = {
-      direction,
-      identifier: identifier || "N/A",
-      carrier: carrier || "Unassigned",
-      shipmentMode: mode,
-      date: date || "",
-      customer: customer || "StyleKorean Logistics",
-      invoice: invoice || "—",
-      vessel: vessel || "—",
-      status: status || "Work in Progress",
-      note: note || "",
-      trackingUrl,
-      sourceName: sourceMeta ? sourceMeta.name : "StyleKorean Master",
-      sourceId: sourceMeta ? sourceMeta.sheetId : DEFAULT_MASTER_ID,
-      raw: rawRow
-    };
-
-    record.quality = evaluateRecordQuality(direction, record);
-    return record;
-  }
-
-  // CSV Parser
-  function parseCSV(csvText) {
-    const lines = [];
-    let currentLine = [];
-    let currentCell = "";
-    let insideQuotes = false;
-
-    for (let i = 0; i < csvText.length; i++) {
-      const char = csvText[i];
-      const nextChar = csvText[i + 1];
-
-      if (char === '"') {
-        if (insideQuotes && nextChar === '"') {
-          currentCell += '"';
-          i++;
-        } else {
-          insideQuotes = !insideQuotes;
-        }
-      } else if (char === ',' && !insideQuotes) {
-        currentLine.push(currentCell.trim());
-        currentCell = "";
-      } else if ((char === '\r' || char === '\n') && !insideQuotes) {
-        if (char === '\r' && nextChar === '\n') i++;
-        currentLine.push(currentCell.trim());
-        if (currentLine.some(c => c)) lines.push(currentLine);
-        currentLine = [];
-        currentCell = "";
-      } else {
-        currentCell += char;
-      }
-    }
-    if (currentCell || currentLine.length > 0) {
-      currentLine.push(currentCell.trim());
-      if (currentLine.some(c => c)) lines.push(currentLine);
-    }
-
-    if (lines.length === 0) return [];
-    const headers = lines[0].map(h => h.toUpperCase());
-    return lines.slice(1).map(row => {
-      const obj = {};
-      headers.forEach((header, index) => {
-        obj[header] = row[index] || "";
-      });
-      return obj;
-    });
-  }
-
-  // Mock Data for StyleKorean Pipeline
-  function generateMockData() {
-    const mockInboundRaw = [
-      { "CONTAINER NO": "HMMU1234567", "CARRIER": "HMM", "ETA": "07/25/2026", "VESSEL / FLIGHT": "HYUNDAI BRAVE / 042E", "STATUS": "In Transit", "INVOICE": "INV-8921", "NOTE": "Priority StyleKorean K-Beauty pallets" },
-      { "CONTAINER NO": "MAEU9876543", "CARRIER": "Maersk", "ETA": "07/28/2026", "VESSEL / FLIGHT": "MAERSK MC-KINNEY", "STATUS": "Customs Hold", "INVOICE": "INV-8940", "NOTE": "Pending FDA clearance" },
-      { "CONTAINER NO": "180-49201948", "CARRIER": "Korean Air Cargo", "ETA": "07/23/2026", "VESSEL / FLIGHT": "KE011 Air", "STATUS": "Work in Progress", "INVOICE": "INV-9002", "NOTE": "Urgent air freight sample" },
-      { "CONTAINER NO": "OOLU5543210", "CARRIER": "OOCL", "ETA": "08/02/2026", "VESSEL / FLIGHT": "OOCL HONG KONG", "STATUS": "Work in Progress", "INVOICE": "INV-9015", "NOTE": "PO-4410 StyleKorean customer order" },
-      { "CONTAINER NO": "SMCU8812903", "CARRIER": "SM Line", "ETA": "07/20/2026", "VESSEL / FLIGHT": "SM LONG BEACH", "STATUS": "Delivered", "INVOICE": "INV-8850", "NOTE": "Unloaded at Dock 4" }
-    ];
-
-    const mockOutboundRaw = [
-      { "PRO NO": "PRO-99201", "CARRIER": "FedEx", "SHIP DATE": "07/23/2026", "CUSTOMER": "Apex Retail Distributors", "INVOICE": "INV-8921", "STATUS": "Shipped", "NOTE": "LTL Freight 4 pallets linked to HMMU1234567" },
-      { "PRO NO": "1Z9999999999999999", "CARRIER": "UPS", "SHIP DATE": "07/24/2026", "CUSTOMER": "Zenith Logistics Hub", "INVOICE": "PO-4425", "STATUS": "Work in Progress", "NOTE": "Small Parcel Express" },
-      { "PRO NO": "PRO-88410", "CARRIER": "Estes Express", "SHIP DATE": "07/26/2026", "CUSTOMER": "Pacific Rim Trading", "INVOICE": "PO-4410", "STATUS": "Work in Progress", "NOTE": "Ground Freight linked to OOLU5543210" },
-      { "PRO NO": "TBA902194012", "CARRIER": "Amazon Logistics", "SHIP DATE": "07/22/2026", "CUSTOMER": "Amazon FBA ONT8", "INVOICE": "INV-8850", "STATUS": "Delivered", "NOTE": "FBA Direct dropoff" }
-    ];
-
-    const srcMeta = { name: "StyleKorean Logistics Master 2026", sheetId: DEFAULT_MASTER_ID };
-    return {
-      inbound: mockInboundRaw.map(r => processRow("inbound", r, srcMeta)),
-      outbound: mockOutboundRaw.map(r => processRow("outbound", r, srcMeta))
-    };
-  }
-
-  // Concurrent Multi-Sheet Load Engine
-  async function loadScheduleData(forceRefresh = false) {
-    state.loading = true;
-
-    const enabledSources = sources.filter(s => s.enabled);
-    if (enabledSources.length === 0) {
-      state.inbound = [];
-      state.outbound = [];
-      state.loading = false;
-      updateDashboard();
-      return;
-    }
-
-    let cachedDataLoaded = false;
-    if (!forceRefresh) {
-      const cached = localStorage.getItem(SNAPSHOT_KEY);
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached);
-          if ((parsed.inbound && parsed.inbound.length > 0) || (parsed.outbound && parsed.outbound.length > 0)) {
-            state.inbound = parsed.inbound || [];
-            state.outbound = parsed.outbound || [];
-            state.lastChecked = parsed.lastChecked || new Date().toISOString();
-            state.loading = false;
-            cachedDataLoaded = true;
-            updateDashboard();
-          }
-        } catch (e) {
-          console.warn("Failed to parse cached snapshot:", e);
-        }
-      }
-    }
-
-    if (!cachedDataLoaded && state.inbound.length === 0) {
-      const mock = generateMockData();
-      state.inbound = mock.inbound;
-      state.outbound = mock.outbound;
-      state.lastChecked = new Date().toISOString();
-      state.loading = false;
-      updateDashboard();
-    }
-
-    try {
-      const fetchPromises = enabledSources.map(src => {
-        const inUrl = `https://docs.google.com/spreadsheets/d/${src.sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(src.inboundTab)}`;
-        const outUrl = `https://docs.google.com/spreadsheets/d/${src.sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(src.outboundTab)}`;
-
-        return Promise.allSettled([
-          fetch(inUrl).then(r => r.text()),
-          fetch(outUrl).then(r => r.text())
-        ]).then(([inRes, outRes]) => {
-          let inRows = [];
-          let outRows = [];
-          if (inRes.status === "fulfilled" && inRes.value.includes(",")) {
-            inRows = parseCSV(inRes.value).map(r => processRow("inbound", r, src));
-          }
-          if (outRes.status === "fulfilled" && outRes.value.includes(",")) {
-            outRows = parseCSV(outRes.value).map(r => processRow("outbound", r, src));
-          }
-          return { inRows, outRows };
-        });
-      });
-
-      const results = await Promise.all(fetchPromises);
-      let combinedInbound = [];
-      let combinedOutbound = [];
-
-      results.forEach(res => {
-        combinedInbound.push(...res.inRows);
-        combinedOutbound.push(...res.outRows);
-      });
-
-      if (combinedInbound.length > 0 || combinedOutbound.length > 0) {
-        state.inbound = combinedInbound;
-        state.outbound = combinedOutbound;
-        state.lastChecked = new Date().toISOString();
-
-        localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({
-          inbound: state.inbound,
-          outbound: state.outbound,
-          lastChecked: state.lastChecked
-        }));
-
-        showToast(`Synced ${enabledSources.length} active StyleKorean Google Sheets!`);
-      }
-    } catch (err) {
-      console.warn("Live multi-fetch fallback:", err);
-    } finally {
-      state.loading = false;
-      updateDashboard();
-    }
-  }
-
-  // Submit Writeback Update
-  async function submitUpdateToSheets(record, newStatus, newNote) {
-    record.status = newStatus;
-    if (newNote != null) record.note = newNote;
-    record.quality = evaluateRecordQuality(record.direction, record);
-
-    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({
-      inbound: state.inbound,
-      outbound: state.outbound,
-      lastChecked: new Date().toISOString()
-    }));
-
-    updateDashboard();
-
-    const targetSrc = sources.find(s => s.sheetId === record.sourceId);
-    const webhookUrl = targetSrc?.webhookUrl;
-
-    if (!webhookUrl) {
-      showToast("Local record updated!");
-      return;
-    }
-
-    try {
-      showToast("Pushing writeback to Google Sheets...");
-      await fetch(webhookUrl, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          direction: record.direction,
-          identifier: record.identifier,
-          status: newStatus,
-          note: record.note,
-          updatedAt: new Date().toISOString()
-        })
-      });
-      showToast("Writeback sent to Google Sheets Webhook!");
-    } catch (e) {
-      console.error("Writeback error:", e);
-      showToast("Saved locally. Webhook error: " + e.message);
-    }
-  }
-
-  // Filters
-  function getFilteredRecords() {
-    let records = [];
-    if (state.direction === "inbound") records = [...state.inbound];
-    else if (state.direction === "outbound") records = [...state.outbound];
-    else records = [...state.inbound, ...state.outbound];
-
-    if (!state.showFinished) {
-      records = records.filter(r => !isFinished(r.status));
-    }
-
-    if (state.mode) {
-      records = records.filter(r => r.shipmentMode === state.mode);
-    }
-
-    if (state.attentionOnly) {
-      records = records.filter(r => r.quality.needsAttention);
-    }
-
-    if (state.query.trim()) {
-      const q = state.query.trim().toLowerCase();
-      records = records.filter(r =>
-        r.identifier.toLowerCase().includes(q) ||
-        r.carrier.toLowerCase().includes(q) ||
-        r.customer.toLowerCase().includes(q) ||
-        r.invoice.toLowerCase().includes(q) ||
-        r.vessel.toLowerCase().includes(q) ||
-        r.sourceName.toLowerCase().includes(q) ||
-        r.note.toLowerCase().includes(q)
-      );
-    }
-
-    return records;
-  }
-
-  function updateDashboard() {
-    const allRecords = [...state.inbound, ...state.outbound];
-    const activeInbound = state.inbound.filter(r => !isFinished(r.status));
-    const activeOutbound = state.outbound.filter(r => !isFinished(r.status));
-    
-    let totalRelational = 0;
-    allRecords.forEach(r => {
-      if (findRelatedRecords(r).length > 0) totalRelational++;
-    });
-
-    const totalScores = allRecords.reduce((acc, r) => acc + r.quality.score, 0);
-    const avgQuality = allRecords.length > 0 ? Math.round(totalScores / allRecords.length) : 100;
-
-    $("#nav-inbound-count").textContent = activeInbound.length;
-    $("#nav-outbound-count").textContent = activeOutbound.length;
-
-    $("#kpi-inbound-val").textContent = activeInbound.length;
-    $("#kpi-outbound-val").textContent = activeOutbound.length;
-    $("#kpi-relational-val").textContent = totalRelational;
-    $("#kpi-quality-val").textContent = `${avgQuality}%`;
-
-    $("#stat-port-sub").textContent = `${activeInbound.length} In-Transit`;
-    $("#stat-dest-sub").textContent = `${activeOutbound.length} Handoffs`;
-
-    $("#source-inbound-total").textContent = state.inbound.length;
-    $("#source-outbound-total").textContent = state.outbound.length;
-    $("#source-rel-total").textContent = totalRelational;
-
-    if (state.lastChecked) {
-      const timeStr = new Date(state.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      $("#last-updated-tag").textContent = `Last checked: ${timeStr}`;
-    }
-
-    renderTable();
-  }
-
-  // Render Table
-  function renderTable() {
-    const tbody = $("#table-body");
-    const emptyState = $("#empty-state");
-    const records = getFilteredRecords();
-
-    $("#record-count").textContent = `${records.length} items matching filter`;
-
-    if (state.loading) {
-      tbody.innerHTML = `
-        <tr class="skeleton-row"><td colspan="11"><div class="skeleton-bar"></div></td></tr>
-        <tr class="skeleton-row"><td colspan="11"><div class="skeleton-bar"></div></td></tr>
-        <tr class="skeleton-row"><td colspan="11"><div class="skeleton-bar"></div></td></tr>
-      `;
-      emptyState.hidden = true;
-      return;
-    }
-
-    if (records.length === 0) {
-      tbody.innerHTML = "";
-      emptyState.hidden = false;
-      return;
-    }
-
-    emptyState.hidden = true;
-    tbody.innerHTML = records.map((r, index) => {
-      const finished = isFinished(r.status);
-      const qualityClass = r.quality.score >= 85 ? "good" : r.quality.score >= 60 ? "warn" : "bad";
-      const relTime = relativeTimeText(r.date);
-      const related = findRelatedRecords(r);
-
-      return `
-        <tr>
-          <td>
-            <span class="dir-pill ${r.direction}">${r.direction}</span>
-            <span class="mode-badge">${escapeHtml(r.shipmentMode)}</span>
-          </td>
-          <td>
-            <span class="id-text">${escapeHtml(r.identifier)}</span>
-          </td>
-          <td>
-            <div class="carrier-cell">
-              <span class="carrier-name">${escapeHtml(r.carrier)}</span>
-              ${r.vessel !== "—" ? `<span class="vessel-sub">${escapeHtml(r.vessel)}</span>` : ""}
-            </div>
-          </td>
-          <td>
-            <div class="date-cell">
-              <span>${formatDate(r.date)}</span>
-              ${relTime ? `<span class="rel-time">${relTime}</span>` : ""}
-            </div>
-          </td>
-          <td>
-            <span>${escapeHtml(r.customer)}</span>
-          </td>
-          <td>
-            <span class="id-text">${escapeHtml(r.invoice)}</span>
-          </td>
-          <td>
-            ${related.length > 0 ? `
-              <span class="rel-pill" title="Linked to ${related.map(x => x.identifier + ' (' + x.sourceName + ')').join(', ')}">
-                🔗 ${related.length} Linked
-              </span>
-            ` : `<span class="rel-pill none">—</span>`}
-          </td>
-          <td>
-            <span class="source-origin-tag" title="Google Sheet Origin">${escapeHtml(r.sourceName)}</span>
-          </td>
-          <td>
-            <span class="status-pill ${finished ? 'finished' : r.quality.needsAttention ? 'attention' : 'wip'}">
-              <span class="status-dot"></span>
-              ${escapeHtml(r.status)}
-            </span>
-          </td>
-          <td>
-            <span class="quality-badge ${qualityClass}">${r.quality.score}%</span>
-          </td>
-          <td>
-            <div style="display:flex; gap:6px;">
-              ${r.trackingUrl ? `<a class="track-link-btn" href="${r.trackingUrl}" target="_blank" rel="noopener">Track ↗</a>` : ""}
-              <button class="action-btn secondary-btn view-detail-btn" data-index="${index}" style="padding:4px 8px;" type="button">Details</button>
-            </div>
-          </td>
-        </tr>
-      `;
-    }).join("");
-
-    $$(".view-detail-btn").forEach(btn => {
-      btn.addEventListener("click", () => {
-        const idx = Number(btn.getAttribute("data-index"));
-        const record = records[idx];
-        if (record) openDetailModal(record);
-      });
-    });
-  }
-
-  // Open Detail Modal Drawer
-  function openDetailModal(record) {
-    const modal = $("#detail-modal");
-    $("#modal-title").textContent = record.identifier;
-    $("#modal-eyebrow").textContent = `${record.direction.toUpperCase()} · ${record.shipmentMode} · ${record.sourceName}`;
-
-    const related = findRelatedRecords(record);
-    const missingItems = record.quality.missing;
-
-    $("#modal-body").innerHTML = `
-      <div class="detail-grid">
-        <div class="detail-item">
-          <div class="detail-label">Carrier / Line</div>
-          <div class="detail-value">${escapeHtml(record.carrier)}</div>
-        </div>
-        <div class="detail-item">
-          <div class="detail-label">Vessel / Flight / Truck</div>
-          <div class="detail-value">${escapeHtml(record.vessel)}</div>
-        </div>
-        <div class="detail-item">
-          <div class="detail-label">Date (${record.direction === 'inbound' ? 'ETA' : 'Ship'})</div>
-          <div class="detail-value">${formatDate(record.date)}</div>
-        </div>
-        <div class="detail-item">
-          <div class="detail-label">Current Status</div>
-          <div class="detail-value">${escapeHtml(record.status)}</div>
-        </div>
-        <div class="detail-item">
-          <div class="detail-label">Customer / Origin</div>
-          <div class="detail-value">${escapeHtml(record.customer)}</div>
-        </div>
-        <div class="detail-item">
-          <div class="detail-label">Invoice / PO #</div>
-          <div class="detail-value">${escapeHtml(record.invoice)}</div>
-        </div>
-      </div>
-
-      <div class="detail-item" style="margin-bottom:20px;">
-        <div class="detail-label">Google Sheet Origin</div>
-        <div class="detail-value" style="font-size:13px;">${escapeHtml(record.sourceName)} (ID: ${record.sourceId})</div>
-      </div>
-
-      <div class="detail-item" style="margin-bottom:20px;">
-        <div class="detail-label">🔗 Cross-Sheet Relational Linked Shipments (${related.length})</div>
-        ${related.length === 0 ? `
-          <div style="font-size:12px; color:var(--muted); margin-top:6px;">No cross-sheet linked ${record.direction === 'inbound' ? 'outbound' : 'inbound'} shipments found for PO/Invoice '${escapeHtml(record.invoice)}'.</div>
-        ` : `
-          <ul class="related-records-list">
-            ${related.map(rel => `
-              <li class="related-record-card">
-                <strong>${rel.direction.toUpperCase()}: ${escapeHtml(rel.identifier)}</strong> (${escapeHtml(rel.carrier)})
-                <div>Origin: ${escapeHtml(rel.sourceName)} | Status: ${escapeHtml(rel.status)}</div>
-              </li>
-            `).join("")}
-          </ul>
-        `}
-      </div>
-
-      <div class="edit-form-box">
-        <div class="edit-form-title">⚡ 2-Way Google Sheets Status Update</div>
-        <label class="detail-label" style="display:block; margin-bottom:4px;">Update Status:</label>
-        <select id="edit-status-select" class="edit-input">
-          <option value="Work in Progress" ${record.status === "Work in Progress" ? "selected" : ""}>Work in Progress</option>
-          <option value="In Transit" ${record.status === "In Transit" ? "selected" : ""}>In Transit</option>
-          <option value="Customs Hold" ${record.status === "Customs Hold" ? "selected" : ""}>Customs Hold</option>
-          <option value="Shipped" ${record.status === "Shipped" ? "selected" : ""}>Shipped</option>
-          <option value="Delivered" ${record.status === "Delivered" ? "selected" : ""}>Delivered</option>
-          <option value="Cancelled" ${record.status === "Cancelled" ? "selected" : ""}>Cancelled</option>
-        </select>
-
-        <label class="detail-label" style="display:block; margin-bottom:4px;">Update Notes:</label>
-        <input type="text" id="edit-notes-input" class="edit-input" value="${escapeHtml(record.note)}" placeholder="Add remarks or notes">
-
-        <button class="btn primary-btn" id="save-writeback-btn" style="width:100%; margin-top:6px;" type="button">
-          Submit Update to Google Sheets
-        </button>
-      </div>
-
-      <div class="detail-item" style="margin-top:20px;">
-        <div class="detail-label">Data Quality Diagnostics (${record.quality.score}%)</div>
-        <ul class="quality-check-list">
-          ${missingItems.length === 0 ? `
-            <li style="color:var(--success);">✓ Complete record. All primary operational fields present.</li>
-          ` : missingItems.map(item => `
-            <li style="color:var(--danger);">⚠️ Missing field: ${escapeHtml(item)}</li>
-          `).join("")}
-        </ul>
-      </div>
-    `;
-
-    $("#modal-footer").innerHTML = `
-      ${record.trackingUrl ? `
-        <a class="btn primary-btn" href="${record.trackingUrl}" target="_blank" rel="noopener" style="flex:1;">
-          Open Carrier Tracking ↗
-        </a>
-      ` : ""}
-      <button class="btn secondary-btn" id="modal-close-action" type="button">Close</button>
-    `;
-
-    modal.hidden = false;
-
-    $("#save-writeback-btn")?.addEventListener("click", () => {
-      const newStatus = $("#edit-status-select").value;
-      const newNotes = $("#edit-notes-input").value;
-      submitUpdateToSheets(record, newStatus, newNotes);
-      closeModal();
-    });
-
-    $("#modal-close-action")?.addEventListener("click", closeModal);
-  }
-
-  function closeModal() {
-    $("#detail-modal").hidden = true;
-  }
-
-  function openAddSourceModal() {
-    $("#add-source-modal").hidden = false;
-  }
-
-  function closeAddSourceModal() {
-    $("#add-source-modal").hidden = true;
-  }
-
-  function showToast(msg) {
-    const container = $("#toast-container");
-    const toast = document.createElement("div");
-    toast.className = "toast";
-    toast.textContent = msg;
-    container.appendChild(toast);
-    setTimeout(() => {
-      toast.remove();
-    }, 3200);
-  }
-
-  // Export
-  function exportCSV() {
-    const records = getFilteredRecords();
-    if (records.length === 0) return showToast("No records to export.");
-
-    const headers = ["Direction", "Identifier", "Carrier", "Mode", "Date", "Customer", "Invoice", "Vessel", "Status", "SourceSheet"];
-    const rows = records.map(r => [
-      r.direction, r.identifier, r.carrier, r.shipmentMode, r.date, r.customer, r.invoice, r.vessel, r.status, r.sourceName
+};
+
+const SOURCE_CLASSES = {
+  "WH TRUCKING": "source-WH-TRUCKING",
+  "B2B/E-COM": "source-B2B-E-COM",
+  "IHERB": "source-IHERB",
+  "TRANSFERS": "source-TRANSFERS",
+  "ULTA": "source-ULTA",
+  "IMPORTS": "source-IMPORTS"
+};
+
+const OUTBOUND_COLUMNS = [
+  "SOURCE",
+  "CUSTOMER",
+  "INVOICE NO.",
+  "SHIP DATE",
+  "Q'ty (Plts / Ctns)",
+  "CARRIER",
+  "RATE",
+  "PRO#",
+  "STATUS"
+];
+
+const INBOUND_COLUMNS = [
+  "Carrier Type",
+  "Shipment #",
+  "Invoice",
+  "MBL",
+  "HBL",
+  "Container",
+  "ETA",
+  "LFD",
+  "Delivery Expected",
+  "Reserved / Broker",
+  "Inbound Status"
+];
+
+let outboundRows = [];
+let inboundRows = [];
+let importScheduleRows = [];
+
+const $ = (id) => document.getElementById(id);
+
+document.addEventListener("DOMContentLoaded", () => {
+  $("sheetLink").href = CONFIG.sheetUrl;
+  wireEvents();
+  refreshAll();
+});
+
+function wireEvents() {
+  $("refreshBtn").addEventListener("click", refreshAll);
+  ["outboundSearch", "sourceFilter", "statusFilter"].forEach(id => {
+    $(id).addEventListener("input", renderOutbound);
+    $(id).addEventListener("change", renderOutbound);
+  });
+  ["inboundSearch", "carrierTypeFilter", "inboundStatusFilter"].forEach(id => {
+    $(id).addEventListener("input", renderInbound);
+    $(id).addEventListener("change", renderInbound);
+  });
+}
+
+async function refreshAll() {
+  setConnection("loading", "Loading live Google Sheets data…");
+  try {
+    const [outbound, inbound, importSchedule] = await Promise.all([
+      fetchSheet(CONFIG.sheets.outbound.name, CONFIG.sheets.outbound.range),
+      fetchSheet(CONFIG.sheets.inbound.name, CONFIG.sheets.inbound.range),
+      fetchSheet(CONFIG.sheets.importSchedule.name, CONFIG.sheets.importSchedule.range)
     ]);
 
-    const csvContent = "data:text/csv;charset=utf-8," + [headers, ...rows].map(e => e.map(val => `"${String(val).replace(/"/g, '""')}"`).join(",")).join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `sk_shipping_schedules_${Date.now()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    showToast("CSV export generated!");
+    outboundRows = outbound.filter(row => hasAnyValue(row) && row["SOURCE"] && row["SOURCE"] !== "SOURCE");
+    inboundRows = inbound
+      .filter(isInboundDataRow)
+      .map(normalizeInboundRow);
+    importScheduleRows = importSchedule.filter(row => hasAnyValue(row) && !containsSheetError(row));
+
+    populateFilters();
+    renderKPIs();
+    renderSourceLegend();
+    renderTimeline();
+    renderOutboundTimeline();
+    renderImportSchedule();
+    renderOutbound();
+    renderInbound();
+
+    $("lastUpdated").textContent = `Last updated: ${new Date().toLocaleString()}`;
+    $("setupNotice").classList.add("hidden");
+    setConnection("good", "Live data loaded from Google Sheets.");
+  } catch (error) {
+    console.error(error);
+    $("setupNotice").classList.remove("hidden");
+    setConnection("bad", "Could not load live sheet data. Check public sharing / Publish to web settings.");
   }
+}
 
-  function exportJSON() {
-    const records = getFilteredRecords();
-    if (records.length === 0) return showToast("No records to export.");
+async function fetchSheet(sheetName, range) {
+  const url = new URL(`https://docs.google.com/spreadsheets/d/${CONFIG.spreadsheetId}/gviz/tq`);
+  url.searchParams.set("tqx", "out:json");
+  url.searchParams.set("sheet", sheetName);
+  url.searchParams.set("range", range);
 
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(records, null, 2));
-    const link = document.createElement("a");
-    link.setAttribute("href", dataStr);
-    link.setAttribute("download", `sk_shipping_schedules_${Date.now()}.json`);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    showToast("JSON export generated!");
+  const res = await fetch(url.toString(), { cache: "no-store" });
+  if (!res.ok) throw new Error(`Google Sheets request failed: ${res.status}`);
+  const text = await res.text();
+  const json = parseGviz(text);
+  return tableToObjects(json.table);
+}
+
+function parseGviz(text) {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end < 0) {
+    throw new Error("Unexpected Google Visualization response.");
   }
+  return JSON.parse(text.slice(start, end + 1));
+}
 
-  // Event Listeners
-  function initEventListeners() {
-    loadSources();
-
-    $$(".nav-tab").forEach(tab => {
-      tab.addEventListener("click", () => {
-        $$(".nav-tab").forEach(t => t.classList.remove("active"));
-        tab.classList.add("active");
-        const nav = tab.getAttribute("data-nav");
-        state.activeNav = nav;
-
-        if (nav === "inbound") {
-          state.direction = "inbound";
-          $("#view-title").textContent = "Inbound Shipments";
-        } else if (nav === "outbound") {
-          state.direction = "outbound";
-          $("#view-title").textContent = "Outbound Shipments";
-        } else if (nav === "sources") {
-          document.querySelector("#sources-section")?.scrollIntoView({ behavior: "smooth" });
-          return;
-        } else {
-          state.direction = "";
-          $("#view-title").textContent = "All Operations Overview";
-        }
-
-        $$("#direction-chips .chip").forEach(c => {
-          c.classList.toggle("active", c.getAttribute("data-direction") === state.direction);
-        });
-
-        updateDashboard();
-      });
+function tableToObjects(table) {
+  const headers = table.cols.map((col, index) => (col.label || `Column ${index + 1}`).trim());
+  return table.rows.map(row => {
+    const obj = {};
+    headers.forEach((header, index) => {
+      const cell = row.c[index];
+      obj[header] = normalizeCell(cell);
     });
-
-    $$("#direction-chips .chip").forEach(chip => {
-      chip.addEventListener("click", () => {
-        $$("#direction-chips .chip").forEach(c => c.classList.remove("active"));
-        chip.classList.add("active");
-        state.direction = chip.getAttribute("data-direction");
-        updateDashboard();
-      });
-    });
-
-    $("#mode-select")?.addEventListener("change", (e) => {
-      state.mode = e.target.value;
-      updateDashboard();
-    });
-
-    $("#attention-toggle")?.addEventListener("change", (e) => {
-      state.attentionOnly = e.target.checked;
-      updateDashboard();
-    });
-
-    $("#finished-toggle")?.addEventListener("change", (e) => {
-      state.showFinished = e.target.checked;
-      updateDashboard();
-    });
-
-    const searchInput = $("#search-input");
-    const clearBtn = $("#clear-search");
-    searchInput?.addEventListener("input", (e) => {
-      state.query = e.target.value;
-      clearBtn.hidden = !state.query;
-      updateDashboard();
-    });
-
-    clearBtn?.addEventListener("click", () => {
-      searchInput.value = "";
-      state.query = "";
-      clearBtn.hidden = true;
-      updateDashboard();
-    });
-
-    $("#reset-filters-btn")?.addEventListener("click", () => {
-      state.query = "";
-      state.mode = "";
-      state.direction = "";
-      state.attentionOnly = false;
-      state.showFinished = false;
-      if (searchInput) searchInput.value = "";
-      if ($("#mode-select")) $("#mode-select").value = "";
-      if ($("#attention-toggle")) $("#attention-toggle").checked = false;
-      if ($("#finished-toggle")) $("#finished-toggle").checked = false;
-      updateDashboard();
-    });
-
-    const exportBtn = $("#export-dropdown-btn");
-    const exportMenu = $("#export-menu");
-    exportBtn?.addEventListener("click", () => {
-      exportMenu.hidden = !exportMenu.hidden;
-    });
-
-    document.addEventListener("click", (e) => {
-      if (!exportBtn?.contains(e.target) && !exportMenu?.contains(e.target)) {
-        if (exportMenu) exportMenu.hidden = true;
-      }
-    });
-
-    $("#export-csv")?.addEventListener("click", exportCSV);
-    $("#export-json")?.addEventListener("click", exportJSON);
-
-    $("#refresh-btn")?.addEventListener("click", () => loadScheduleData(true));
-    $("#clear-cache-btn")?.addEventListener("click", () => {
-      localStorage.removeItem(SNAPSHOT_KEY);
-      showToast("Local snapshot cache cleared.");
-      loadScheduleData(true);
-    });
-
-    $("#open-add-source-modal-btn")?.addEventListener("click", openAddSourceModal);
-    $("#close-source-modal-btn")?.addEventListener("click", closeAddSourceModal);
-    $("#cancel-source-modal-btn")?.addEventListener("click", closeAddSourceModal);
-    $("#save-new-source-btn")?.addEventListener("click", saveNewSource);
-
-    $("#show-script-btn")?.addEventListener("click", () => {
-      const box = $("#script-code-box");
-      if (box) box.hidden = !box.hidden;
-    });
-
-    $("#copy-script-btn")?.addEventListener("click", () => {
-      const code = $("#apps-script-code")?.textContent;
-      if (code) {
-        navigator.clipboard.writeText(code).then(() => {
-          showToast("Apps Script code copied!");
-        });
-      }
-    });
-
-    $$(".theme-btn").forEach(btn => {
-      btn.addEventListener("click", () => {
-        $$(".theme-btn").forEach(b => b.classList.remove("selected"));
-        btn.classList.add("selected");
-        const theme = btn.getAttribute("data-theme");
-        $("#app").className = `ops-app theme-${theme}`;
-        state.theme = theme;
-      });
-    });
-
-    $("#share-btn")?.addEventListener("click", () => {
-      const url = new URL(window.location.href);
-      url.hash = state.direction || "overview";
-      navigator.clipboard.writeText(url.href).then(() => {
-        showToast("Shareable view link copied!");
-      });
-    });
-
-    $("#modal-close-btn")?.addEventListener("click", closeModal);
-    $("#detail-modal")?.addEventListener("click", (e) => {
-      if (e.target.id === "detail-modal") closeModal();
-    });
-    $("#add-source-modal")?.addEventListener("click", (e) => {
-      if (e.target.id === "add-source-modal") closeAddSourceModal();
-    });
-  }
-
-  document.addEventListener("DOMContentLoaded", () => {
-    initEventListeners();
-    loadScheduleData();
+    return obj;
   });
-})();
+}
+
+function normalizeCell(cell) {
+  if (!cell) return "";
+  if (cell.f !== undefined && cell.f !== null) return String(cell.f).trim();
+  if (cell.v !== undefined && cell.v !== null) return String(cell.v).trim();
+  return "";
+}
+
+function hasAnyValue(row) {
+  return Object.values(row).some(v => String(v || "").trim() !== "");
+}
+
+function isInboundDataRow(row) {
+  if (!hasAnyValue(row)) return false;
+  if (containsSheetError(row)) return false;
+
+  const type = norm(row["Carrier Type"]);
+  const shipment = norm(row["Shipment #"]);
+
+  if (type === "CARRIER TYPE" || shipment === "SHIPMENT #") return false;
+  if (type === "SCHEDULE" || shipment.includes("TWO-WEEK ETA SCHEDULE")) return false;
+
+  return [
+    "Shipment #",
+    "Invoice",
+    "MBL",
+    "HBL",
+    "Container",
+    "ETA",
+    "LFD",
+    "Delivery Expected",
+    "Reserved / Broker",
+    "Inbound Status"
+  ].some(col => String(row[col] || "").trim() !== "");
+}
+
+function containsSheetError(row) {
+  return Object.values(row).some(value => /^#(REF|VALUE|N\/A|ERROR|DIV\/0|NAME|NUM)!?$/i.test(String(value || "").trim()));
+}
+
+function normalizeInboundRow(row) {
+  const next = { ...row };
+  if (!next["Shipment #"]) {
+    next["Shipment #"] = next["Container"] || next["HBL"] || next["MBL"] || next["Invoice"] || "";
+  }
+  return next;
+}
+
+function setConnection(kind, text) {
+  const dot = $("connectionDot");
+  dot.className = "status-dot";
+  if (kind === "good") dot.classList.add("good");
+  if (kind === "bad") dot.classList.add("bad");
+  $("connectionText").textContent = text;
+}
+
+function populateFilters() {
+  fillSelect("sourceFilter", unique(outboundRows.map(r => r["SOURCE"])).sort());
+  fillSelect("statusFilter", unique(outboundRows.map(r => r["STATUS"] || "Blank")).sort());
+  fillSelect("carrierTypeFilter", unique(inboundRows.map(r => r["Carrier Type"])).sort());
+  fillSelect("inboundStatusFilter", unique(inboundRows.map(r => r["Inbound Status"] || "Blank")).sort());
+}
+
+function fillSelect(id, values) {
+  const select = $(id);
+  const first = select.options[0];
+  select.innerHTML = "";
+  select.appendChild(first);
+  values.filter(Boolean).forEach(value => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+}
+
+function unique(values) {
+  return [...new Set(values.map(v => String(v || "").trim()).filter(Boolean))];
+}
+
+function renderKPIs() {
+  const shipped = outboundRows.filter(row => norm(row["STATUS"]).includes("SHIPPED")).length;
+  const activeInbound = inboundRows.filter(row => !norm(row["Inbound Status"]).includes("DELIVERED"));
+  const ocean = activeInbound.filter(row => row["Carrier Type"] === "Ocean").length;
+  const parcelAir = activeInbound.filter(row => ["UPS", "FedEx", "DHL", "USPS", "Air"].includes(row["Carrier Type"])).length;
+  const rateTotal = outboundRows.reduce((sum, row) => sum + parseCurrency(row["RATE"]), 0);
+
+  $("kpiOutbound").textContent = outboundRows.length.toLocaleString();
+  $("kpiShipped").textContent = shipped.toLocaleString();
+  $("kpiInbound").textContent = activeInbound.length.toLocaleString();
+  $("kpiOcean").textContent = ocean.toLocaleString();
+  $("kpiParcelAir").textContent = parcelAir.toLocaleString();
+  $("kpiRate").textContent = formatCurrency(rateTotal);
+}
+
+function renderSourceLegend() {
+  const counts = {};
+  outboundRows.forEach(row => {
+    const source = row["SOURCE"] || "Other";
+    counts[source] = (counts[source] || 0) + 1;
+  });
+
+  const legend = $("sourceLegend");
+  if (!legend) return;
+  legend.closest(".panel")?.remove();
+  return;
+  Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .forEach(([source, count]) => {
+      const chip = document.createElement("span");
+      chip.className = `source-chip ${sourceClass(source)}`;
+      chip.textContent = `${source}: ${count}`;
+      legend.appendChild(chip);
+    });
+}
+
+function renderTimeline() {
+  const timeline = $("inboundTimeline");
+  timeline.innerHTML = "";
+
+  const today = new Date();
+  const start = startOfDay(today);
+  const days = Array.from({ length: 14 }, (_, i) => addDays(start, i));
+
+  days.forEach(day => {
+    const matches = inboundRows.filter(row => {
+      if (norm(row["Inbound Status"]).includes("DELIVERED")) return false;
+      const eta = parseSheetDate(row["ETA"]);
+      return eta && isSameDay(eta, day);
+    });
+
+    const card = document.createElement("article");
+    card.className = "day-card";
+    const label = day.toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric" });
+    card.innerHTML = `<strong>${label}</strong>`;
+
+    const list = document.createElement("ul");
+    if (!matches.length) {
+      const li = document.createElement("li");
+      li.className = "cell-muted";
+      li.textContent = "No ETA";
+      list.appendChild(li);
+    } else {
+      matches.slice(0, 8).forEach(row => {
+        const li = document.createElement("li");
+        const item = row["Container"] || row["Shipment #"] || row["HBL"] || row["MBL"] || row["Invoice"] || "Shipment";
+        const itemHtml = row["Container"]
+          ? formatTrackingLinks(row["Container"], row)
+          : escapeHtml(item);
+        li.innerHTML = `<span class="type-pill ${typeClass(row["Carrier Type"])}">${escapeHtml(row["Carrier Type"] || "Other")}</span><br>${itemHtml}`;
+        list.appendChild(li);
+      });
+      if (matches.length > 8) {
+        const li = document.createElement("li");
+        li.className = "cell-muted";
+        li.textContent = `+${matches.length - 8} more`;
+        list.appendChild(li);
+      }
+    }
+    card.appendChild(list);
+    timeline.appendChild(card);
+  });
+}
+
+function renderOutboundTimeline() {
+  const timeline = $("outboundTimeline");
+  if (!timeline) return;
+
+  timeline.innerHTML = "";
+
+  const start = startOfDay(new Date());
+  const days = Array.from({ length: 14 }, (_, i) => addDays(start, i));
+
+  days.forEach(day => {
+    const matches = outboundRows
+      .filter(row => {
+        if (/\b(SHIPPED|DELIVERED|RECEIVED|COMPLETED)\b/.test(norm(row["STATUS"]))) return false;
+        const shipDate = parseSheetDate(row["SHIP DATE"]);
+        return shipDate && isSameDay(shipDate, day);
+      })
+      .sort((a, b) => norm(a["CUSTOMER"]).localeCompare(norm(b["CUSTOMER"])));
+
+    const card = document.createElement("article");
+    card.className = "day-card outbound-day-card";
+    const label = day.toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric" });
+    card.innerHTML = `<strong>${label}</strong>`;
+
+    const list = document.createElement("ul");
+    if (!matches.length) {
+      const li = document.createElement("li");
+      li.className = "cell-muted";
+      li.textContent = "No shipment";
+      list.appendChild(li);
+    } else {
+      matches.slice(0, 8).forEach(row => {
+        const li = document.createElement("li");
+        const source = row["SOURCE"] || "Other";
+        const item = row["CUSTOMER"] || row["INVOICE NO."] || row["PRO#"] || "Shipment";
+        const detail = row["INVOICE NO."] && row["INVOICE NO."] !== item
+          ? row["INVOICE NO."]
+          : (row["PRO#"] && row["PRO#"] !== item ? row["PRO#"] : "");
+        li.innerHTML = `<span class="type-pill ${sourceClass(source)}">${escapeHtml(source)}</span><br>${escapeHtml(item)}${detail ? `<br><span class="cell-muted">${escapeHtml(detail)}</span>` : ""}`;
+        list.appendChild(li);
+      });
+
+      if (matches.length > 8) {
+        const li = document.createElement("li");
+        li.className = "cell-muted";
+        li.textContent = `+${matches.length - 8} more`;
+        list.appendChild(li);
+      }
+    }
+
+    card.appendChild(list);
+    timeline.appendChild(card);
+  });
+}
+
+function renderImportSchedule() {
+  const timeline = $("importScheduleTimeline");
+  if (!timeline) return;
+
+  const dayColumns = getImportScheduleDayColumns();
+  let totalItems = 0;
+  timeline.innerHTML = "";
+
+  dayColumns.forEach(day => {
+    const items = importScheduleRows
+      .flatMap(row => splitScheduleItems(row[day]))
+      .filter(Boolean);
+
+    totalItems += items.length;
+
+    const card = document.createElement("article");
+    card.className = "day-card import-day-card";
+    card.innerHTML = `<strong>${escapeHtml(day)}</strong>`;
+
+    const list = document.createElement("ul");
+    if (!items.length) {
+      const li = document.createElement("li");
+      li.className = "cell-muted";
+      li.textContent = "No imports";
+      list.appendChild(li);
+    } else {
+      items.slice(0, 8).forEach(value => {
+        const parsed = parseScheduleItem(value);
+        const li = document.createElement("li");
+        li.innerHTML = `<span class="type-pill ${typeClass(parsed.type)}">${escapeHtml(parsed.type)}</span><br>${escapeHtml(parsed.item)}`;
+        list.appendChild(li);
+      });
+      if (items.length > 8) {
+        const li = document.createElement("li");
+        li.className = "cell-muted";
+        li.textContent = `+${items.length - 8} more`;
+        list.appendChild(li);
+      }
+    }
+
+    card.appendChild(list);
+    timeline.appendChild(card);
+  });
+
+  $("importScheduleCount").textContent = `${totalItems.toLocaleString()} imports`;
+}
+
+function getImportScheduleDayColumns() {
+  const firstRow = importScheduleRows[0] || {};
+  return Object.keys(firstRow)
+    .filter(key => key && key !== "Schedule" && !/^Column\s+\d+$/i.test(key))
+    .slice(0, 14);
+}
+
+function splitScheduleItems(value) {
+  return String(value || "")
+    .split(/\n+/)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function parseScheduleItem(value) {
+  const clean = String(value || "").trim();
+  const match = clean.match(/^([^:]{2,20}):\s*(.*)$/);
+  if (!match) return { type: "Import", item: clean };
+  return { type: match[1].trim(), item: match[2].trim() || clean };
+}
+
+function renderOutbound() {
+  const q = norm($("outboundSearch").value);
+  const source = $("sourceFilter").value;
+  const status = $("statusFilter").value;
+
+  const rows = outboundRows.filter(row => {
+    const matchesQ = !q || norm(Object.values(row).join(" ")).includes(q);
+    const matchesSource = !source || row["SOURCE"] === source;
+    const rowStatus = row["STATUS"] || "Blank";
+    const matchesStatus = !status || rowStatus === status;
+    return matchesQ && matchesSource && matchesStatus;
+  });
+
+  $("outboundCount").textContent = `${rows.length.toLocaleString()} rows`;
+  renderTable("outboundTable", rows, OUTBOUND_COLUMNS, decorateOutboundCell);
+}
+
+function renderInbound() {
+  const q = norm($("inboundSearch").value);
+  const type = $("carrierTypeFilter").value;
+  const status = $("inboundStatusFilter").value;
+
+  const rows = inboundRows.filter(row => {
+    const matchesQ = !q || norm(Object.values(row).join(" ")).includes(q);
+    const matchesType = !type || row["Carrier Type"] === type;
+    const rowStatus = row["Inbound Status"] || "Blank";
+    const matchesStatus = !status || rowStatus === status;
+    return matchesQ && matchesType && matchesStatus;
+  });
+
+  $("inboundCount").textContent = `${rows.length.toLocaleString()} rows`;
+  renderTable("inboundTable", rows, INBOUND_COLUMNS, decorateInboundCell);
+}
+
+function renderTable(tableId, rows, columns, cellDecorator) {
+  const table = $(tableId);
+  const thead = table.querySelector("thead");
+  const tbody = table.querySelector("tbody");
+
+  thead.innerHTML = `<tr>${columns.map(col => `<th>${escapeHtml(col)}</th>`).join("")}</tr>`;
+  tbody.innerHTML = "";
+
+  rows.slice(0, 1000).forEach(row => {
+    const tr = document.createElement("tr");
+    columns.forEach(col => {
+      const td = document.createElement("td");
+      td.innerHTML = cellDecorator(col, row[col] || "", row);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+
+  if (rows.length > 1000) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = columns.length;
+    td.className = "cell-muted";
+    td.textContent = `Showing first 1,000 of ${rows.length.toLocaleString()} filtered rows. Narrow the search to see more.`;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+  }
+}
+
+function decorateOutboundCell(col, value, row) {
+  if (col === "SOURCE") {
+    return `<span class="source-chip ${sourceClass(value)}">${escapeHtml(value || "Other")}</span>`;
+  }
+  if (col === "STATUS") {
+    return statusPill(value);
+  }
+  return escapeHtml(value);
+}
+
+function decorateInboundCell(col, value, row) {
+  if (col === "Carrier Type") {
+    return `<span class="type-pill ${typeClass(value)}">${escapeHtml(value || "Other")}</span>`;
+  }
+  if (col === "Container") {
+    return formatTrackingLinks(value, row);
+  }
+  if (col === "Inbound Status") {
+    return statusPill(value);
+  }
+  return escapeHtml(value);
+}
+
+function formatTrackingLinks(value, row) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+
+  return text
+    .split(/\n+/)
+    .map(item => item.trim())
+    .filter(Boolean)
+    .map(item => {
+      const url = getTrackingUrl(item, row);
+      if (!url) return escapeHtml(item);
+      return `<a class="tracking-link" href="${escapeAttribute(url)}" target="_blank" rel="noreferrer">${escapeHtml(item)}</a>`;
+    })
+    .join("<br>");
+}
+
+function getTrackingUrl(container, row) {
+  const cleanContainer = String(container || "").trim();
+  if (!cleanContainer) return "";
+
+  const upperContainer = cleanContainer.toUpperCase();
+  const carrierKey = [
+    row["Carrier Type"],
+    row["Shipment #"],
+    row["MBL"],
+    row["HBL"],
+    row["VSL"]
+  ].map(value => String(value || "")).join(" ").toUpperCase();
+  const upsMatch = cleanContainer.match(/\b1Z[A-Z0-9]+\b/i);
+  const uspsMatch = cleanContainer.match(/\b(?:94|92|93)\d{8,}\b/i);
+  const dhlMatch = cleanContainer.match(/\b(?:JJD[A-Z0-9]+|JD[A-Z0-9]+|DHL[A-Z0-9]+)\b/i);
+  const encoded = encodeURIComponent(cleanContainer);
+
+  if (/^1Z/.test(upperContainer) || upsMatch) {
+    return `https://www.ups.com/track?loc=en_US&tracknum=${encodeURIComponent(upsMatch?.[0] || cleanContainer)}`;
+  }
+  if (/^(94|92|93|USPS)/.test(upperContainer) || uspsMatch) {
+    return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encodeURIComponent(uspsMatch?.[0] || cleanContainer)}`;
+  }
+  if (/^(JD|JJD|DHL)/.test(upperContainer) || dhlMatch) {
+    return `https://www.dhl.com/us-en/home/tracking/tracking-express.html?submit=1&tracking-id=${encodeURIComponent(dhlMatch?.[0] || cleanContainer)}`;
+  }
+  if (/FEDEX|FDX/.test(carrierKey)) {
+    return `https://www.fedex.com/fedextrack/?trknbr=${encoded}`;
+  }
+  if (/SMLM|SM /.test(carrierKey)) {
+    return `https://esvc.smlines.com/smline/CUP_HOM_3301GS.do?_search=false&f_cmd=121&page=1&rows=10000&search_name=${encoded}&search_type=C&sidx=&sord=asc`;
+  }
+  if (/HDMU|(^| )HMM( |$)/.test(carrierKey)) {
+    return "https://www.hmm21.com/e-service/general/trackNTrace/TrackNTrace.do";
+  }
+  if (/MAEU|MAERSK| MRSU| MSKU/.test(`${carrierKey} ${upperContainer}`)) {
+    return `https://www.maersk.com/tracking/${encoded}`;
+  }
+  if (/KORP|KMTC| KMTU/.test(`${carrierKey} ${upperContainer}`)) {
+    return "https://www.ekmtc.com/index.html";
+  }
+  if (/(^| )ONE( |$)|PUSM/.test(carrierKey)) {
+    return `https://ecomm.one-line.com/one-ecom/manage-shipment/cargo-tracking?ctrack-field=${encoded}&trakNoParam=${encoded}`;
+  }
+
+  return "";
+}
+
+function sourceClass(source) {
+  const key = String(source || "OTHER").trim().toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return SOURCE_CLASSES[source] || `source-${key}` || "source-OTHER";
+}
+
+function typeClass(type) {
+  const key = String(type || "Other").replace(/[^A-Za-z0-9]+/g, "");
+  return `type-${key || "Other"}`;
+}
+
+function statusPill(value) {
+  const clean = value || "Blank";
+  const n = norm(clean);
+  let cls = "";
+  if (n.includes("DELIVERED") || n.includes("SHIPPED")) cls = "status-Delivered";
+  else if (n.includes("READY")) cls = "status-Ready";
+  else if (n.includes("PENDING") || n.includes("CUSTOMS")) cls = "status-Pending";
+  else if (n.includes("DELAY") || n.includes("HOLD") || n.includes("FDA") || n.includes("FWS")) cls = "status-Delayed";
+  return `<span class="status-pill ${cls}">${escapeHtml(clean)}</span>`;
+}
+
+function parseCurrency(value) {
+  const n = Number(String(value || "").replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function formatCurrency(value) {
+  return value.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+}
+
+function norm(value) {
+  return String(value || "").toUpperCase().trim();
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;")
+    .replaceAll("\n", "<br>");
+}
+
+function escapeAttribute(value) {
+  return escapeHtml(value).replaceAll("`", "&#096;");
+}
+
+function startOfDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function isSameDay(a, b) {
+  return a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate();
+}
+
+function parseSheetDate(value) {
+  if (!value) return null;
+  const text = String(value).trim();
+
+  // Match common sheet date strings like 07/18, 07/18/2026, 7/18
+  const m = text.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+  if (m) {
+    const month = Number(m[1]) - 1;
+    const day = Number(m[2]);
+    let year = m[3] ? Number(m[3]) : new Date().getFullYear();
+    if (year < 100) year += 2000;
+    return new Date(year, month, day);
+  }
+
+  const d = new Date(text);
+  return Number.isNaN(d.getTime()) ? null : startOfDay(d);
+}
