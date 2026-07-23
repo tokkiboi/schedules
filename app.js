@@ -6,15 +6,15 @@
   "use strict";
 
   const DEFAULT_MASTER_ID = "1M-vZ24Yw4ZN7R7b_473cVn8kny8DznTakSsD3VQsCzc";
-  const SNAPSHOT_KEY = "sk-pages-schedule-snapshot-multi-v2";
-  const SOURCES_KEY = "sk-pages-schedule-sources-multi-v2";
+  const SNAPSHOT_KEY = "sk-pages-schedule-snapshot-multi-v3";
+  const SOURCES_KEY = "sk-pages-schedule-sources-multi-v3";
   const FINISHED_SET = new Set(["SHIPPED", "DELIVERED", "RECEIVED", "COMPLETED", "CANCELLED", "CANCELED"]);
 
-  // Multi-Source Registry Presets
+  // Multi-Source Registry Presets from StyleKorean Logistics Master Pipeline
   const defaultSources = [
     {
-      id: "master",
-      name: "Master Hub Sheet",
+      id: "master-2026",
+      name: "StyleKorean Logistics Master 2026",
       sheetId: DEFAULT_MASTER_ID,
       inboundTab: "Inbound",
       outboundTab: "Outbound",
@@ -23,7 +23,25 @@
     },
     {
       id: "buena-park",
-      name: "Buena Park Regional Dock",
+      name: "StyleKorean Buena Park Hub",
+      sheetId: DEFAULT_MASTER_ID,
+      inboundTab: "Inbound",
+      outboundTab: "Outbound",
+      webhookUrl: "",
+      enabled: true
+    },
+    {
+      id: "korea-cargo",
+      name: "StyleKorean Korea Air & Ocean Freight",
+      sheetId: DEFAULT_MASTER_ID,
+      inboundTab: "Inbound",
+      outboundTab: "Outbound",
+      webhookUrl: "",
+      enabled: true
+    },
+    {
+      id: "outbound-handoffs",
+      name: "StyleKorean Outbound Carrier Handoffs",
       sheetId: DEFAULT_MASTER_ID,
       inboundTab: "Inbound",
       outboundTab: "Outbound",
@@ -342,7 +360,7 @@
     });
   }
 
-  // Process Row with Source Sheet Metadata
+  // Process Row
   function processRow(direction, rawRow, sourceMeta) {
     const identifier = getRowValue(rawRow, "CONTAINER NO", "CONTAINER", "MBL", "HBL", "PRO NO", "PRO #", "TRACKING NO", "TRACKING", "AWB", "BOL");
     const carrierContext = getRowValue(rawRow, "CARRIER", "LINE", "SHIPPING LINE", "CARRIER TYPE", "METHOD");
@@ -362,13 +380,13 @@
       carrier: carrier || "Unassigned",
       shipmentMode: mode,
       date: date || "",
-      customer: customer || "SK Internal",
+      customer: customer || "StyleKorean Logistics",
       invoice: invoice || "—",
       vessel: vessel || "—",
       status: status || "Work in Progress",
       note: note || "",
       trackingUrl,
-      sourceName: sourceMeta ? sourceMeta.name : "Master Sheet",
+      sourceName: sourceMeta ? sourceMeta.name : "StyleKorean Master",
       sourceId: sourceMeta ? sourceMeta.sheetId : DEFAULT_MASTER_ID,
       raw: rawRow
     };
@@ -424,13 +442,13 @@
     });
   }
 
-  // Mock Data
+  // Mock Data for StyleKorean Pipeline
   function generateMockData() {
     const mockInboundRaw = [
-      { "CONTAINER NO": "HMMU1234567", "CARRIER": "HMM", "ETA": "07/25/2026", "VESSEL / FLIGHT": "HYUNDAI BRAVE / 042E", "STATUS": "In Transit", "INVOICE": "INV-8921", "NOTE": "Priority electronics pallet" },
+      { "CONTAINER NO": "HMMU1234567", "CARRIER": "HMM", "ETA": "07/25/2026", "VESSEL / FLIGHT": "HYUNDAI BRAVE / 042E", "STATUS": "In Transit", "INVOICE": "INV-8921", "NOTE": "Priority StyleKorean K-Beauty pallets" },
       { "CONTAINER NO": "MAEU9876543", "CARRIER": "Maersk", "ETA": "07/28/2026", "VESSEL / FLIGHT": "MAERSK MC-KINNEY", "STATUS": "Customs Hold", "INVOICE": "INV-8940", "NOTE": "Pending FDA clearance" },
       { "CONTAINER NO": "180-49201948", "CARRIER": "Korean Air Cargo", "ETA": "07/23/2026", "VESSEL / FLIGHT": "KE011 Air", "STATUS": "Work in Progress", "INVOICE": "INV-9002", "NOTE": "Urgent air freight sample" },
-      { "CONTAINER NO": "OOLU5543210", "CARRIER": "OOCL", "ETA": "08/02/2026", "VESSEL / FLIGHT": "OOCL HONG KONG", "STATUS": "Work in Progress", "INVOICE": "INV-9015", "NOTE": "PO-4410 customer order" },
+      { "CONTAINER NO": "OOLU5543210", "CARRIER": "OOCL", "ETA": "08/02/2026", "VESSEL / FLIGHT": "OOCL HONG KONG", "STATUS": "Work in Progress", "INVOICE": "INV-9015", "NOTE": "PO-4410 StyleKorean customer order" },
       { "CONTAINER NO": "SMCU8812903", "CARRIER": "SM Line", "ETA": "07/20/2026", "VESSEL / FLIGHT": "SM LONG BEACH", "STATUS": "Delivered", "INVOICE": "INV-8850", "NOTE": "Unloaded at Dock 4" }
     ];
 
@@ -441,7 +459,7 @@
       { "PRO NO": "TBA902194012", "CARRIER": "Amazon Logistics", "SHIP DATE": "07/22/2026", "CUSTOMER": "Amazon FBA ONT8", "INVOICE": "INV-8850", "STATUS": "Delivered", "NOTE": "FBA Direct dropoff" }
     ];
 
-    const srcMeta = { name: "Master Hub Sheet", sheetId: DEFAULT_MASTER_ID };
+    const srcMeta = { name: "StyleKorean Logistics Master 2026", sheetId: DEFAULT_MASTER_ID };
     return {
       inbound: mockInboundRaw.map(r => processRow("inbound", r, srcMeta)),
       outbound: mockOutboundRaw.map(r => processRow("outbound", r, srcMeta))
@@ -531,7 +549,7 @@
           lastChecked: state.lastChecked
         }));
 
-        showToast(`Synced ${enabledSources.length} active Google Sheet ${enabledSources.length === 1 ? 'source' : 'sources'}!`);
+        showToast(`Synced ${enabledSources.length} active StyleKorean Google Sheets!`);
       }
     } catch (err) {
       console.warn("Live multi-fetch fallback:", err);
@@ -655,7 +673,7 @@
     renderTable();
   }
 
-  // Render Table with Origin Source Tags
+  // Render Table
   function renderTable() {
     const tbody = $("#table-body");
     const emptyState = $("#empty-state");
