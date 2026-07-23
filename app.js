@@ -1,5 +1,5 @@
 /**
- * SK Distribution — Relational Shipping Schedules & Google Drive Sync Logic
+ * SK Distribution — Relational Shipping Schedules & Multi-Source Google Drive Sync Logic
  */
 
 (() => {
@@ -8,10 +8,26 @@
   const DEFAULT_MASTER_ID = "1M-vZ24Yw4ZN7R7b_473cVn8kny8DznTakSsD3VQsCzc";
   const SNAPSHOT_KEY = "sk-pages-schedule-snapshot-v1";
   const CONFIG_KEY = "sk-pages-schedule-config-v1";
+  const SOURCES_KEY = "sk-pages-schedule-sources-v1";
   const FINISHED_SET = new Set(["SHIPPED", "DELIVERED", "RECEIVED", "COMPLETED", "CANCELLED", "CANCELED"]);
+
+  // Sources Registry State
+  const defaultSources = [
+    {
+      id: "master",
+      name: "Master Distribution Hub",
+      sheetId: DEFAULT_MASTER_ID,
+      inboundTab: "Inbound",
+      outboundTab: "Outbound",
+      webhookUrl: ""
+    }
+  ];
+
+  let sources = [...defaultSources];
 
   // Configuration State
   const config = {
+    activeSourceId: "master",
     sheetId: DEFAULT_MASTER_ID,
     inboundTab: "Inbound",
     outboundTab: "Outbound",
@@ -44,12 +60,30 @@
   const normalizedStatus = (val) => String(val || "Work in Progress").trim().replace(/\s+/g, " ");
   const isFinished = (val) => FINISHED_SET.has(normalizedStatus(val).toUpperCase());
 
-  // Load Saved Configuration
-  function loadConfig() {
-    const saved = localStorage.getItem(CONFIG_KEY);
-    if (saved) {
+  // URL Parser for Sheet ID
+  function extractSheetIdFromUrl(input) {
+    const text = String(input || "").trim();
+    const match = text.match(/\/d\/([a-zA-Z0-9-_]{25,})\//) || text.match(/^([a-zA-Z0-9-_]{25,})$/);
+    return match ? match[1] : text;
+  }
+
+  // Load Saved Sources & Configuration
+  function loadSourcesAndConfig() {
+    const savedSources = localStorage.getItem(SOURCES_KEY);
+    if (savedSources) {
       try {
-        const parsed = JSON.parse(saved);
+        const parsed = JSON.parse(savedSources);
+        if (Array.isArray(parsed) && parsed.length > 0) sources = parsed;
+      } catch (e) {
+        console.warn("Could not parse saved sources:", e);
+      }
+    }
+
+    const savedConfig = localStorage.getItem(CONFIG_KEY);
+    if (savedConfig) {
+      try {
+        const parsed = JSON.parse(savedConfig);
+        config.activeSourceId = parsed.activeSourceId || "master";
         config.sheetId = parsed.sheetId || DEFAULT_MASTER_ID;
         config.inboundTab = parsed.inboundTab || "Inbound";
         config.outboundTab = parsed.outboundTab || "Outbound";
@@ -59,32 +93,83 @@
       }
     }
 
-    // Update Form Inputs
+    renderSourceSelectors();
+    updateFormInputs();
+  }
+
+  function renderSourceSelectors() {
+    // Topbar Selector
+    const headerSelect = $("#header-source-select");
+    if (headerSelect) {
+      headerSelect.innerHTML = sources.map(src => `
+        <option value="${src.id}" ${src.id === config.activeSourceId ? "selected" : ""}>
+          📊 ${escapeHtml(src.name)} (${src.sheetId.slice(0, 8)}...)
+        </option>
+      `).join("");
+    }
+
+    // Sources Cards List in Data Sources Tab
+    const cardsList = $("#sources-cards-list");
+    if (cardsList) {
+      cardsList.innerHTML = sources.map(src => `
+        <div class="source-card-item ${src.id === config.activeSourceId ? 'active' : ''}">
+          <div class="source-card-title">${escapeHtml(src.name)}</div>
+          <div class="source-card-id">ID: <code>${src.sheetId}</code></div>
+          <div style="font-size:11px; color:var(--muted); margin-bottom:10px;">
+            Tabs: Inbound (${escapeHtml(src.inboundTab)}) · Outbound (${escapeHtml(src.outboundTab)})
+          </div>
+          <div class="source-card-links">
+            <button class="btn ${src.id === config.activeSourceId ? 'primary-btn' : 'secondary-btn'} select-src-btn" data-id="${src.id}" style="padding:4px 10px;" type="button">
+              ${src.id === config.activeSourceId ? '✓ Active' : 'Switch Source'}
+            </button>
+            <a class="btn secondary-btn" href="https://docs.google.com/spreadsheets/d/${src.sheetId}" target="_blank" rel="noopener" style="padding:4px 10px;">
+              Drive Sheet ↗
+            </a>
+          </div>
+        </div>
+      `).join("");
+
+      $$(".select-src-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-id");
+          switchSource(id);
+        });
+      });
+    }
+  }
+
+  function switchSource(sourceId) {
+    const found = sources.find(s => s.id === sourceId);
+    if (!found) return;
+
+    config.activeSourceId = found.id;
+    config.sheetId = found.sheetId;
+    config.inboundTab = found.inboundTab;
+    config.outboundTab = found.outboundTab;
+    config.webhookUrl = found.webhookUrl || "";
+
+    localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+    renderSourceSelectors();
+    updateFormInputs();
+    showToast(`Switched active Google Sheet source to "${found.name}"`);
+    loadScheduleData(true);
+  }
+
+  function updateFormInputs() {
     if ($("#cfg-sheet-id")) $("#cfg-sheet-id").value = config.sheetId;
     if ($("#cfg-inbound-tab")) $("#cfg-inbound-tab").value = config.inboundTab;
     if ($("#cfg-outbound-tab")) $("#cfg-outbound-tab").value = config.outboundTab;
     if ($("#cfg-webhook-url")) $("#cfg-webhook-url").value = config.webhookUrl;
 
-    updateSheetLink();
-  }
-
-  function saveConfig() {
-    config.sheetId = $("#cfg-sheet-id")?.value.trim() || DEFAULT_MASTER_ID;
-    config.inboundTab = $("#cfg-inbound-tab")?.value.trim() || "Inbound";
-    config.outboundTab = $("#cfg-outbound-tab")?.value.trim() || "Outbound";
-    config.webhookUrl = $("#cfg-webhook-url")?.value.trim() || "";
-
-    localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
-    updateSheetLink();
-    showToast("Google Drive & Sheets configuration saved!");
-    loadScheduleData(true);
-  }
-
-  function updateSheetLink() {
     const directLink = $("#sheet-direct-link");
-    if (directLink) {
-      directLink.href = `https://docs.google.com/spreadsheets/d/${config.sheetId}`;
-    }
+    if (directLink) directLink.href = `https://docs.google.com/spreadsheets/d/${config.sheetId}`;
+
+    const heroInbound = $("#hero-inbound-sheet-link");
+    if (heroInbound) heroInbound.href = `https://docs.google.com/spreadsheets/d/${config.sheetId}/edit#gid=0`;
+
+    const heroOutbound = $("#hero-outbound-sheet-link");
+    if (heroOutbound) heroOutbound.href = `https://docs.google.com/spreadsheets/d/${config.sheetId}/edit`;
+
     const statusText = $("#source-writeback-status");
     if (statusText) {
       statusText.textContent = config.webhookUrl ? "2-Way Webhook Active" : "Read-Only (No Webhook)";
@@ -92,7 +177,57 @@
     }
   }
 
-  // Value getter helper
+  function saveConfig() {
+    config.sheetId = extractSheetIdFromUrl($("#cfg-sheet-id")?.value);
+    config.inboundTab = $("#cfg-inbound-tab")?.value.trim() || "Inbound";
+    config.outboundTab = $("#cfg-outbound-tab")?.value.trim() || "Outbound";
+    config.webhookUrl = $("#cfg-webhook-url")?.value.trim() || "";
+
+    const activeSrc = sources.find(s => s.id === config.activeSourceId);
+    if (activeSrc) {
+      activeSrc.sheetId = config.sheetId;
+      activeSrc.inboundTab = config.inboundTab;
+      activeSrc.outboundTab = config.outboundTab;
+      activeSrc.webhookUrl = config.webhookUrl;
+      localStorage.setItem(SOURCES_KEY, JSON.stringify(sources));
+    }
+
+    localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+    renderSourceSelectors();
+    updateFormInputs();
+    showToast("Google Sheets configuration updated!");
+    loadScheduleData(true);
+  }
+
+  function saveNewSource() {
+    const name = $("#new-source-name")?.value.trim();
+    const rawUrl = $("#new-source-url")?.value.trim();
+    const inbound = $("#new-source-inbound")?.value.trim() || "Inbound";
+    const outbound = $("#new-source-outbound")?.value.trim() || "Outbound";
+
+    if (!name || !rawUrl) return showToast("Please enter a source name and Google Sheet URL.");
+
+    const sheetId = extractSheetIdFromUrl(rawUrl);
+    const newId = "source-" + Date.now();
+
+    const newSrc = {
+      id: newId,
+      name,
+      sheetId,
+      inboundTab: inbound,
+      outboundTab: outbound,
+      webhookUrl: ""
+    };
+
+    sources.push(newSrc);
+    localStorage.setItem(SOURCES_KEY, JSON.stringify(sources));
+
+    closeAddSourceModal();
+    switchSource(newId);
+    showToast(`Added and connected new source "${name}"!`);
+  }
+
+  // Row Value Helper
   function getRowValue(row, ...keys) {
     if (!row) return "";
     for (const key of keys) {
@@ -106,7 +241,7 @@
     return "";
   }
 
-  // Date Utilities
+  // Date Parsing
   function parseDate(input) {
     const text = String(input || "").trim();
     if (!text) return Number.MAX_SAFE_INTEGER;
@@ -263,7 +398,7 @@
     });
   }
 
-  // Process Raw Row
+  // Process Row
   function processRow(direction, rawRow) {
     const identifier = getRowValue(rawRow, "CONTAINER NO", "CONTAINER", "MBL", "HBL", "PRO NO", "PRO #", "TRACKING NO", "TRACKING", "AWB", "BOL");
     const carrierContext = getRowValue(rawRow, "CARRIER", "LINE", "SHIPPING LINE", "CARRIER TYPE", "METHOD");
@@ -343,7 +478,7 @@
     });
   }
 
-  // Mock Realistic Data Fallback
+  // Mock Realistic Data
   function generateMockData() {
     const mockInboundRaw = [
       { "CONTAINER NO": "HMMU1234567", "CARRIER": "HMM", "ETA": "07/25/2026", "VESSEL / FLIGHT": "HYUNDAI BRAVE / 042E", "STATUS": "In Transit", "INVOICE": "INV-8921", "NOTE": "Priority electronics pallet" },
@@ -366,14 +501,13 @@
     };
   }
 
-  // Load Data Engine
+  // Load Schedule Data Engine
   async function loadScheduleData(forceRefresh = false) {
     state.loading = true;
 
-    // Check Local Storage cache first
     let cachedDataLoaded = false;
     if (!forceRefresh) {
-      const cached = localStorage.getItem(SNAPSHOT_KEY);
+      const cached = localStorage.getItem(SNAPSHOT_KEY + "-" + config.activeSourceId);
       if (cached) {
         try {
           const parsed = JSON.parse(cached);
@@ -391,7 +525,6 @@
       }
     }
 
-    // If no cached data, populate fallback data immediately so UI is 100% interactive instantly
     if (!cachedDataLoaded && state.inbound.length === 0) {
       const mock = generateMockData();
       state.inbound = mock.inbound;
@@ -428,13 +561,13 @@
         state.outbound = outboundData.length > 0 ? outboundData : state.outbound;
         state.lastChecked = new Date().toISOString();
 
-        localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({
+        localStorage.setItem(SNAPSHOT_KEY + "-" + config.activeSourceId, JSON.stringify({
           inbound: state.inbound,
           outbound: state.outbound,
           lastChecked: state.lastChecked
         }));
 
-        showToast("Live Google Sheets data synced!");
+        showToast(`Synced "${sources.find(s=>s.id===config.activeSourceId)?.name || 'Google Sheet'}"!`);
       }
     } catch (err) {
       console.warn("Live fetch fallback:", err);
@@ -443,24 +576,14 @@
       updateDashboard();
     }
   }
-      state.inbound = mock.inbound;
-      state.outbound = mock.outbound;
-      state.lastChecked = new Date().toISOString();
-      showToast("Loaded snapshot schedule data.");
-    } finally {
-      state.loading = false;
-      updateDashboard();
-    }
-  }
 
-  // Submit 2-Way Writeback Update
+  // Writeback Update
   async function submitUpdateToSheets(record, newStatus, newNote) {
     record.status = newStatus;
     if (newNote != null) record.note = newNote;
     record.quality = evaluateRecordQuality(record.direction, record);
 
-    // Save updated snapshot
-    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({
+    localStorage.setItem(SNAPSHOT_KEY + "-" + config.activeSourceId, JSON.stringify({
       inbound: state.inbound,
       outbound: state.outbound,
       lastChecked: new Date().toISOString()
@@ -469,13 +592,13 @@
     updateDashboard();
 
     if (!config.webhookUrl) {
-      showToast("Local record updated! (Add Apps Script Webhook URL to push live to Google Sheets)");
+      showToast("Local record updated!");
       return;
     }
 
     try {
-      showToast("Pushing 2-way writeback to Google Sheets...");
-      const response = await fetch(config.webhookUrl, {
+      showToast("Pushing writeback to Google Sheets...");
+      await fetch(config.webhookUrl, {
         method: "POST",
         mode: "no-cors",
         headers: { "Content-Type": "application/json" },
@@ -487,10 +610,10 @@
           updatedAt: new Date().toISOString()
         })
       });
-      showToast("Writeback update sent to Google Sheets Webhook!");
+      showToast("Writeback sent to Google Sheets Webhook!");
     } catch (e) {
       console.error("Writeback error:", e);
-      showToast("Saved locally. Webhook writeback error: " + e.message);
+      showToast("Saved locally. Webhook error: " + e.message);
     }
   }
 
@@ -533,7 +656,6 @@
     const activeInbound = state.inbound.filter(r => !isFinished(r.status));
     const activeOutbound = state.outbound.filter(r => !isFinished(r.status));
     
-    // Relational Links Calculation
     let totalRelational = 0;
     allRecords.forEach(r => {
       if (findRelatedRecords(r).length > 0) totalRelational++;
@@ -658,7 +780,7 @@
     });
   }
 
-  // Open Detail Modal Drawer with Relational & Writeback Controls
+  // Open Detail Modal Drawer
   function openDetailModal(record) {
     const modal = $("#detail-modal");
     $("#modal-title").textContent = record.identifier;
@@ -695,7 +817,6 @@
         </div>
       </div>
 
-      <!-- Relational Matches Card -->
       <div class="detail-item" style="margin-bottom:20px;">
         <div class="detail-label">🔗 Relational Linked Shipments (${related.length})</div>
         ${related.length === 0 ? `
@@ -712,7 +833,6 @@
         `}
       </div>
 
-      <!-- 2-Way Sheet Writeback Update Form -->
       <div class="edit-form-box">
         <div class="edit-form-title">⚡ 2-Way Google Sheets Status Update</div>
         <label class="detail-label" style="display:block; margin-bottom:4px;">Update Status:</label>
@@ -756,7 +876,6 @@
 
     modal.hidden = false;
 
-    // Attach Writeback Event
     $("#save-writeback-btn")?.addEventListener("click", () => {
       const newStatus = $("#edit-status-select").value;
       const newNotes = $("#edit-notes-input").value;
@@ -771,7 +890,14 @@
     $("#detail-modal").hidden = true;
   }
 
-  // Toast Notifications
+  function openAddSourceModal() {
+    $("#add-source-modal").hidden = false;
+  }
+
+  function closeAddSourceModal() {
+    $("#add-source-modal").hidden = true;
+  }
+
   function showToast(msg) {
     const container = $("#toast-container");
     const toast = document.createElement("div");
@@ -818,9 +944,13 @@
     showToast("JSON export generated!");
   }
 
-  // Setup Event Listeners
+  // Event Listeners
   function initEventListeners() {
-    loadConfig();
+    loadSourcesAndConfig();
+
+    $("#header-source-select")?.addEventListener("change", (e) => {
+      switchSource(e.target.value);
+    });
 
     $$(".nav-tab").forEach(tab => {
       tab.addEventListener("click", () => {
@@ -920,12 +1050,16 @@
 
     $("#refresh-btn")?.addEventListener("click", () => loadScheduleData(true));
     $("#clear-cache-btn")?.addEventListener("click", () => {
-      localStorage.removeItem(SNAPSHOT_KEY);
+      localStorage.removeItem(SNAPSHOT_KEY + "-" + config.activeSourceId);
       showToast("Local cache cleared.");
       loadScheduleData(true);
     });
 
     $("#save-cfg-btn")?.addEventListener("click", saveConfig);
+    $("#open-add-source-modal-btn")?.addEventListener("click", openAddSourceModal);
+    $("#close-source-modal-btn")?.addEventListener("click", closeAddSourceModal);
+    $("#cancel-source-modal-btn")?.addEventListener("click", closeAddSourceModal);
+    $("#save-new-source-btn")?.addEventListener("click", saveNewSource);
 
     $("#show-script-btn")?.addEventListener("click", () => {
       const box = $("#script-code-box");
@@ -936,7 +1070,7 @@
       const code = $("#apps-script-code")?.textContent;
       if (code) {
         navigator.clipboard.writeText(code).then(() => {
-          showToast("Apps Script code copied to clipboard!");
+          showToast("Apps Script code copied!");
         });
       }
     });
@@ -962,6 +1096,9 @@
     $("#modal-close-btn")?.addEventListener("click", closeModal);
     $("#detail-modal")?.addEventListener("click", (e) => {
       if (e.target.id === "detail-modal") closeModal();
+    });
+    $("#add-source-modal")?.addEventListener("click", (e) => {
+      if (e.target.id === "add-source-modal") closeAddSourceModal();
     });
   }
 

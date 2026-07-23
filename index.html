@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Live inbound and outbound shipping schedules for SK Distribution operations hub. Direct carrier tracking, real-time Google Sheets sync, relational data linking, and logistics data diagnostics.">
+  <meta name="description" content="Live inbound and outbound shipment schedules for SK Distribution operations hub. Direct carrier tracking, real-time Google Sheets sync, multi-source sheets manager, and relational logistics control.">
   <title>SK Distribution — Shipping Operations &amp; Relational Logistics Control</title>
   
   <!-- Fonts -->
@@ -31,13 +31,18 @@
         <button class="nav-tab active" type="button" data-nav="overview">Overview</button>
         <button class="nav-tab" type="button" data-nav="inbound">Inbound <span class="badge" id="nav-inbound-count">0</span></button>
         <button class="nav-tab" type="button" data-nav="outbound">Outbound <span class="badge" id="nav-outbound-count">0</span></button>
-        <button class="nav-tab" type="button" data-nav="sources">Data Sources &amp; Drive Sync</button>
+        <button class="nav-tab" type="button" data-nav="sources">Google Sheets Sources</button>
       </nav>
 
       <div class="top-actions">
+        <!-- Active Google Sheet Source Selector -->
+        <select id="header-source-select" class="custom-select" title="Active Google Sheet Data Source">
+          <option value="default">📊 Master Sheet (1M-vZ24Y...)</option>
+        </select>
+
         <div class="live-status-pill" id="live-indicator" title="Source status">
           <span class="status-dot online"></span>
-          <span class="status-text" id="live-indicator-text">Live 2-Way Sync</span>
+          <span class="status-text" id="live-indicator-text">Live Sheets Sync</span>
         </div>
 
         <div class="theme-switcher" aria-label="Design System Theme">
@@ -47,7 +52,7 @@
         </div>
 
         <button class="action-btn share-btn" id="share-btn" type="button" title="Copy shareable link to current view">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 12v8a2 2 0 0 1-2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 12v8a2 2 0 0 1-2 2h12a2 2 0 0 1-2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>
           Share View
         </button>
       </div>
@@ -59,7 +64,7 @@
         <div class="hero-content">
           <p class="eyebrow">Buena Park Hub · Operations Control Board</p>
           <h1>Expected Shipping Schedules &amp; Relational Handoffs</h1>
-          <p class="hero-copy">Real-time tracking of inbound container arrivals, relational outbound customer shipments, carrier links, and 2-way Google Sheets writeback.</p>
+          <p class="hero-copy">Real-time tracking of inbound container arrivals, relational outbound customer shipments, carrier links, and multi-source Google Sheets writeback.</p>
           
           <div class="hero-actions">
             <a class="btn primary-btn" href="#board-section">
@@ -67,8 +72,14 @@
             </a>
             <button class="btn secondary-btn" id="refresh-btn" type="button">
               <svg class="spin-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M2.5 22v-6h6"/><path d="M2 11.5a10 10 0 0 1 18.8-4.3L21.5 8M22 12.5a10 10 0 0 1-18.8 4.3L2.5 16"/></svg>
-              Sync Sheets Source
+              Sync Active Sheet
             </button>
+            <a class="btn secondary-btn" id="hero-inbound-sheet-link" href="https://docs.google.com/spreadsheets/d/1M-vZ24Yw4ZN7R7b_473cVn8kny8DznTakSsD3VQsCzc/edit" target="_blank" rel="noopener">
+              Inbound Sheet ↗
+            </a>
+            <a class="btn secondary-btn" id="hero-outbound-sheet-link" href="https://docs.google.com/spreadsheets/d/1M-vZ24Yw4ZN7R7b_473cVn8kny8DznTakSsD3VQsCzc/edit" target="_blank" rel="noopener">
+              Outbound Sheet ↗
+            </a>
           </div>
         </div>
 
@@ -238,30 +249,36 @@
         </div>
       </section>
 
-      <!-- Relational Data Sources & Google Drive/Sheets Bi-Directional Manager -->
+      <!-- Multi-Source Google Sheets Manager & Drive Link Section -->
       <section class="sources-section" id="sources-section">
         <div class="sources-card">
           <div class="sources-header">
             <div>
-              <h3>Relational Google Drive &amp; Sheets Sync Manager</h3>
-              <p class="sources-sub">Configure bi-directional read/write links to your Google Sheets database and Apps Script endpoints.</p>
+              <h3>Connected Google Sheets Data Sources</h3>
+              <p class="sources-sub">Manage, add, and switch between your Google Drive spreadsheet data sources and Apps Script 2-way writeback endpoints.</p>
             </div>
             <div class="sources-actions">
+              <button class="btn primary-btn" id="open-add-source-modal-btn" type="button">+ Add Google Sheet Source</button>
               <button class="btn secondary-btn" id="clear-cache-btn" type="button">Reset Local Cache</button>
-              <a class="btn primary-btn" id="sheet-direct-link" href="https://docs.google.com/spreadsheets/d/1M-vZ24Yw4ZN7R7b_473cVn8kny8DznTakSsD3VQsCzc" target="_blank" rel="noopener">Open Master Sheet ↗</a>
+              <a class="btn secondary-btn" id="sheet-direct-link" href="https://docs.google.com/spreadsheets/d/1M-vZ24Yw4ZN7R7b_473cVn8kny8DznTakSsD3VQsCzc" target="_blank" rel="noopener">Open Active Sheet ↗</a>
             </div>
           </div>
 
-          <!-- Configuration Form Grid -->
+          <!-- Sources Cards List -->
+          <div class="sources-cards-list" id="sources-cards-list">
+            <!-- Dynamically populated cards -->
+          </div>
+
+          <!-- Configuration Form Grid for Active Source -->
           <div class="config-grid">
             <div class="config-box">
-              <h4>1. Master Google Sheet ID</h4>
-              <p class="config-desc">Google Drive Spreadsheet ID extracted from your Google Sheets URL.</p>
+              <h4>Active Google Sheet ID</h4>
+              <p class="config-desc">Spreadsheet ID extracted from your Google Sheets URL.</p>
               <input type="text" id="cfg-sheet-id" class="config-input" value="1M-vZ24Yw4ZN7R7b_473cVn8kny8DznTakSsD3VQsCzc">
             </div>
 
             <div class="config-box">
-              <h4>2. Sheet Tab Names</h4>
+              <h4>Sheet Tab Names</h4>
               <div class="inputs-row">
                 <input type="text" id="cfg-inbound-tab" class="config-input" value="Inbound" placeholder="Inbound tab name">
                 <input type="text" id="cfg-outbound-tab" class="config-input" value="Outbound" placeholder="Outbound tab name">
@@ -269,14 +286,14 @@
             </div>
 
             <div class="config-box full-width">
-              <h4>3. Writeback Sync (Google Apps Script Webhook URL)</h4>
-              <p class="config-desc">Enter your Google Apps Script Web App URL to enable instant 2-way writeback from this app back to your live Google Sheet.</p>
+              <h4>2-Way Writeback (Google Apps Script Webhook URL)</h4>
+              <p class="config-desc">Enter your Google Apps Script Web App URL to enable instant writeback from this app back to your live Google Sheet.</p>
               <input type="url" id="cfg-webhook-url" class="config-input" placeholder="https://script.google.com/macros/s/AKfycb.../exec">
             </div>
           </div>
 
           <div class="sources-footer-actions">
-            <button class="btn primary-btn" id="save-cfg-btn" type="button">Save Connection Settings</button>
+            <button class="btn primary-btn" id="save-cfg-btn" type="button">Save Source Settings</button>
             <button class="btn secondary-btn" id="show-script-btn" type="button">Copy Google Apps Script Webhook Code 📋</button>
           </div>
 
@@ -333,7 +350,42 @@
       </section>
     </main>
 
-    <!-- Shipment Detail Drawer Modal with Relational Mapping & Edit Form -->
+    <!-- Modal: Add Custom Google Sheet Source -->
+    <div class="modal-overlay" id="add-source-modal" hidden>
+      <div class="modal-card" style="max-width:500px;" role="dialog" aria-labelledby="add-source-title">
+        <header class="modal-header">
+          <div>
+            <span class="modal-eyebrow">Google Drive Integration</span>
+            <h2 class="modal-title" id="add-source-title">Add Google Sheet</h2>
+          </div>
+          <button class="modal-close" id="close-source-modal-btn" type="button">&times;</button>
+        </header>
+        <div class="modal-body">
+          <label class="detail-label" style="display:block; margin-bottom:4px;">Source Name:</label>
+          <input type="text" id="new-source-name" class="edit-input" placeholder="e.g. Buena Park Regional Hub Sheet">
+
+          <label class="detail-label" style="display:block; margin-bottom:4px; margin-top:12px;">Google Sheet URL or ID:</label>
+          <input type="text" id="new-source-url" class="edit-input" placeholder="https://docs.google.com/spreadsheets/d/1M-vZ24Y.../edit">
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px;">
+            <div>
+              <label class="detail-label" style="display:block; margin-bottom:4px;">Inbound Tab Name:</label>
+              <input type="text" id="new-source-inbound" class="edit-input" value="Inbound">
+            </div>
+            <div>
+              <label class="detail-label" style="display:block; margin-bottom:4px;">Outbound Tab Name:</label>
+              <input type="text" id="new-source-outbound" class="edit-input" value="Outbound">
+            </div>
+          </div>
+        </div>
+        <footer class="modal-footer">
+          <button class="btn primary-btn" id="save-new-source-btn" style="flex:1;" type="button">Connect &amp; Sync Sheet</button>
+          <button class="btn secondary-btn" id="cancel-source-modal-btn" type="button">Cancel</button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- Shipment Detail Drawer Modal -->
     <div class="modal-overlay" id="detail-modal" hidden>
       <div class="modal-card" role="dialog" aria-labelledby="modal-title" aria-modal="true">
         <header class="modal-header">

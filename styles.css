@@ -969,6 +969,45 @@ main {
   gap: 12px;
 }
 
+.sources-cards-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.source-card-item {
+  background: var(--surface-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px;
+  position: relative;
+}
+
+.source-card-item.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.source-card-title {
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.source-card-id {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.source-card-links {
+  display: flex;
+  gap: 8px;
+}
+
 .config-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1128,7 +1167,7 @@ main {
   font-size: 12px;
 }
 
-/* Modal Drawer */
+/* Modal Drawer & Overlay Display Fixes */
 .modal-overlay[hidden], [hidden] {
   display: none !important;
 }
@@ -1141,6 +1180,7 @@ main {
   z-index: 200;
   display: flex;
   justify-content: flex-end;
+  align-items: center;
 }
 
 .modal-card {
